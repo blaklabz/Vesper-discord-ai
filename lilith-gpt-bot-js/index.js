@@ -52,10 +52,6 @@ function extractFirstUrl(content) {
 /*
  * Recursively collect text from Discord's newer
  * message component structure.
- *
- * FreeStuff currently puts its game announcement
- * inside nested type-10 text components rather than
- * normal message.content or embeds.
  */
 function extractComponentText(components) {
     const chunks = [];
@@ -86,8 +82,7 @@ function extractComponentText(components) {
 }
 
 /*
- * Extract a reasonable game title from the
- * FreeStuff text block.
+ * Extract a reasonable game title from FreeStuff text.
  */
 function extractGameTitle(content, url) {
     let text = content;
@@ -97,36 +92,109 @@ function extractGameTitle(content, url) {
     }
 
     text = text
-        /*
-         * Strip markdown heading markers.
-         *
-         * Example:
-         * ### Game name here
-         *
-         * becomes:
-         * Game name here
-         */
         .replace(/^#+\s*/gm, '')
-
-        /*
-         * Strip basic markdown emphasis.
-         */
         .replace(/\*\*/g, '')
         .replace(/__+/g, '')
-
-        /*
-         * Clean up whitespace.
-         */
         .trim();
 
-    /*
-     * The first line of the FreeStuff component
-     * is currently the game title.
-     */
     const firstLine =
         text.split('\n')[0].trim();
 
     return firstLine.slice(0, 128);
+}
+
+/*
+ * Return true if the URL looks like a game-store page
+ * we want Vesper to treat as a game discovery.
+ */
+function isGameUrl(url) {
+    if (!url) {
+        return false;
+    }
+
+    try {
+        const parsed = new URL(url);
+
+        const host =
+            parsed.hostname
+                .toLowerCase()
+                .replace(/^www\./, '');
+
+        const gameHosts = [
+            'store.steampowered.com',
+            'store.epicgames.com',
+            'gog.com',
+            'itch.io',
+            'humblebundle.com',
+        ];
+
+        return gameHosts.some(
+            (gameHost) =>
+                host === gameHost ||
+                host.endsWith(`.${gameHost}`)
+        );
+    } catch {
+        return false;
+    }
+}
+
+/*
+ * Try to derive a human-readable game title
+ * from a recognized store URL.
+ */
+function extractGameTitleFromUrl(url) {
+    try {
+        const parsed = new URL(url);
+
+        const host =
+            parsed.hostname
+                .toLowerCase()
+                .replace(/^www\./, '');
+
+        /*
+         * Steam:
+         * /app/3517740/Frostrail/
+         */
+        if (host === 'store.steampowered.com') {
+            const parts =
+                parsed.pathname
+                    .split('/')
+                    .filter(Boolean);
+
+            const appIndex =
+                parts.indexOf('app');
+
+            if (
+                appIndex !== -1 &&
+                parts[appIndex + 2]
+            ) {
+                return parts[appIndex + 2]
+                    .replace(/_/g, ' ')
+                    .trim();
+            }
+        }
+
+        /*
+         * Generic fallback:
+         * use the last meaningful URL path segment.
+         */
+        const parts =
+            parsed.pathname
+                .split('/')
+                .filter(Boolean);
+
+        if (parts.length > 0) {
+            return parts[
+                parts.length - 1
+            ]
+                .replace(/[-_]/g, ' ')
+                .trim();
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
 }
 
 client.once(Events.ClientReady, (readyClient) => {
@@ -144,11 +212,6 @@ client.on(Events.MessageCreate, async (message) => {
         FREESTUFF_BOT_ID &&
         message.author.id === FREESTUFF_BOT_ID
     ) {
-        /*
-         * FreeStuff's newer message format uses
-         * Discord components instead of normal
-         * message content.
-         */
         const componentText =
             extractComponentText(
                 message.components
@@ -193,11 +256,6 @@ client.on(Events.MessageCreate, async (message) => {
 
         const added =
             enqueueGame({
-                /*
-                 * Discord isn't consistently rendering
-                 * the literal "Playing" prefix for bot
-                 * activities, so keep it in the name.
-                 */
                 title: `Playing ${title}`,
                 url,
                 messageId: message.id,
@@ -235,6 +293,68 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     /*
+     * Ambient game discovery.
+     *
+     * If a human posts a recognizable game-store
+     * URL in one of Vesper's allowed channels,
+     * silently queue it.
+     *
+     * They do not need to say "Vesper".
+     */
+    const ambientAllowedChannel =
+        CHANNELS.includes(
+            message.channelId
+        );
+
+    if (ambientAllowedChannel) {
+        const gameUrl =
+            extractFirstUrl(
+                message.content
+            );
+
+        if (
+            gameUrl &&
+            isGameUrl(gameUrl)
+        ) {
+            const gameTitle =
+                extractGameTitleFromUrl(
+                    gameUrl
+                );
+
+            if (gameTitle) {
+                const added =
+                    enqueueGame({
+                        title:
+                            `Playing ${gameTitle}`,
+
+                        url:
+                            gameUrl,
+
+                        messageId:
+                            message.id,
+
+                        channelId:
+                            message.channelId,
+
+                        source:
+                            'channel-game-post',
+
+                        discoveredAt:
+                            Date.now(),
+                    });
+
+                if (added) {
+                    console.log(
+                        `[game-play] discovered game in chat: ${gameTitle}`
+                    );
+
+                    startNextGame(client);
+                }
+            }
+        }
+    }
+
+    /*
      * Ignore Discord replies during normal
      * conversational handling.
      */
@@ -247,7 +367,9 @@ client.on(Events.MessageCreate, async (message) => {
      * OR directly mention Vesper.
      */
     const allowedChannel =
-        CHANNELS.includes(message.channelId);
+        CHANNELS.includes(
+            message.channelId
+        );
 
     const mentionedBot =
         message.mentions.users.has(
@@ -259,12 +381,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     /*
-     * In allowed channels, respond whenever
-     * the word "Vesper" appears anywhere
-     * in the message.
-     *
-     * Also respond if Discord directly
-     * @mentions the bot.
+     * Normal conversational trigger.
      */
     const namedVesper =
         /\bvesper\b/i.test(
@@ -275,11 +392,6 @@ client.on(Events.MessageCreate, async (message) => {
         return;
     }
 
-    /*
-     * Remove Vesper's name / direct mention so
-     * command parsing operates on the meaningful
-     * part of the message.
-     */
     const cleanedContent =
         message.content
             .replace(/<@!?\d+>/g, '')
@@ -287,13 +399,7 @@ client.on(Events.MessageCreate, async (message) => {
             .trim();
 
     /*
-     * Temporary manual game-play test hook.
-     *
-     * Examples:
-     *
-     *   Vesper testgame Quake
-     *   Vesper testgame Chicken
-     *   Vesper testgame Enshrouded
+     * Temporary manual test hook.
      */
     const testGameMatch =
         cleanedContent.match(
@@ -304,12 +410,6 @@ client.on(Events.MessageCreate, async (message) => {
         let title =
             testGameMatch[1].trim();
 
-        /*
-         * Let either of these work:
-         *
-         *   Vesper testgame Quake
-         *   Vesper testgame Playing Quake
-         */
         title = title.replace(
             /^playing\s+/i,
             ''
@@ -317,23 +417,23 @@ client.on(Events.MessageCreate, async (message) => {
 
         const added =
             enqueueGame({
-                /*
-                 * Keep the visible activity wording
-                 * consistent with FreeStuff games.
-                 */
-                title: `Playing ${title}`,
+                title:
+                    `Playing ${title}`,
 
-                /*
-                 * Each manual test gets a unique URL
-                 * so repeated testing of the same
-                 * game isn't blocked as a duplicate.
-                 */
-                url: `test://${Date.now()}`,
+                url:
+                    `test://${Date.now()}`,
 
-                messageId: message.id,
-                channelId: message.channelId,
-                source: 'manual-test',
-                discoveredAt: Date.now(),
+                messageId:
+                    message.id,
+
+                channelId:
+                    message.channelId,
+
+                source:
+                    'manual-test',
+
+                discoveredAt:
+                    Date.now(),
             });
 
         if (added) {
@@ -373,11 +473,6 @@ client.on(Events.MessageCreate, async (message) => {
             [...prevMessages.values()].reverse();
 
         for (const msg of orderedMessages) {
-            /*
-             * Ignore other bots.
-             *
-             * Keep Vesper's own previous replies.
-             */
             if (
                 msg.author.bot &&
                 msg.author.id !== client.user.id
@@ -385,11 +480,6 @@ client.on(Events.MessageCreate, async (message) => {
                 continue;
             }
 
-            /*
-             * For users, only include messages
-             * where Vesper was named or directly
-             * mentioned.
-             */
             if (
                 msg.author.id !== client.user.id
             ) {
@@ -452,9 +542,6 @@ client.on(Events.MessageCreate, async (message) => {
             return;
         }
 
-        /*
-         * Discord message limit.
-         */
         const chunkSizeLimit = 2000;
 
         for (
@@ -468,14 +555,6 @@ client.on(Events.MessageCreate, async (message) => {
                     i + chunkSizeLimit
                 );
 
-            /*
-             * First chunk replies directly
-             * to the user.
-             *
-             * Remaining chunks just go into
-             * the channel so Discord doesn't
-             * create repeated reply pings.
-             */
             if (i === 0) {
                 await message.reply(chunk);
             } else {
@@ -501,9 +580,6 @@ client.on(Events.MessageCreate, async (message) => {
             );
         }
     } finally {
-        /*
-         * Always stop the typing interval.
-         */
         clearInterval(
             sendTypingInterval
         );
