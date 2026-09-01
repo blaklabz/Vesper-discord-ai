@@ -74,57 +74,7 @@ client.once(Events.ClientReady, (readyClient) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-    /*
-     * Let FreeStuff through before the generic
-     * "ignore bots" rule.
-     */
-    if (
-        FREESTUFF_BOT_ID &&
-        message.author.id === FREESTUFF_BOT_ID
-    ) {
-        const url =
-            extractFirstUrl(message.content);
-
-        if (!url) {
-            console.log(
-                '[game-play] FreeStuff message had no URL'
-            );
-
-            return;
-        }
-
-        const title =
-            extractGameTitle(
-                message.content,
-                url
-            );
-
-        if (!title) {
-            console.log(
-                '[game-play] Could not determine game title'
-            );
-
-            return;
-        }
-
-        const added =
-            enqueueGame({
-                title,
-                url,
-                messageId: message.id,
-                channelId: message.channelId,
-                source: 'freestuff',
-                discoveredAt: Date.now(),
-            });
-
-        if (added) {
-            startNextGame(client);
-        }
-
-        return;
-    }
-
-    // Ignore all other bots
+    // Ignore bots
     if (message.author.bot) return;
 
     // Ignore @everyone / @here
@@ -163,39 +113,6 @@ client.on(Events.MessageCreate, async (message) => {
     const namedVesper = /\bvesper\b/i.test(message.content);
 
     if (!namedVesper && !mentionedBot) {
-        return;
-    }
-
-    const cleanedContent = message.content
-        .replace(/<@!?\d+>/g, '')
-        .replace(/\bvesper\b/gi, '')
-        .trim();
-
-    const testGameMatch =
-        cleanedContent.match(/^testgame\s+(.+)$/i);
-
-    if (testGameMatch) {
-        const title =
-            testGameMatch[1].trim();
-
-        const added =
-            enqueueGame({
-                title,
-                url: `test://${Date.now()}`,
-                messageId: message.id,
-                channelId: message.channelId,
-                source: 'manual-test',
-                discoveredAt: Date.now(),
-            });
-
-        if (added) {
-            startNextGame(client);
-
-            await message.reply(
-                `queued **${title}**`
-            );
-        }
-
         return;
     }
 

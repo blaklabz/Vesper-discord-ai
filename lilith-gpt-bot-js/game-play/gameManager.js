@@ -125,6 +125,10 @@ function finishCurrentGame(client) {
 
     clearPlayingActivity(client);
 
+    console.log(
+      '[game-play] cleared playing activity'
+    );
+
     /*
      * If another game is waiting,
      * immediately move on to a random queued game.
