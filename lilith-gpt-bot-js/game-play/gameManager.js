@@ -97,6 +97,11 @@ function startNextGame(client) {
         status: 'online',
     });
 
+    console.log(
+        '[game-play] presence:',
+        client.user.presence.activities
+    );
+
     playTimer = setTimeout(() => {
         finishCurrentGame(client);
     }, duration.ms);
