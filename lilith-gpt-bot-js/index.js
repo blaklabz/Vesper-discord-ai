@@ -9,6 +9,11 @@ const {
 
 const OpenAI = require('openai');
 
+const {
+    enqueueGame,
+    startNextGame,
+} = require('./game-play/gameManager');
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -17,6 +22,9 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
     ],
 });
+
+const FREESTUFF_BOT_ID =
+    process.env.FREESTUFF_BOT_ID;
 
 const CHANNELS = [
     '1232029053452812329',
@@ -27,12 +35,96 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_KEY,
 });
 
+/*
+* Game-play message parsing
+*/
+
+function extractFirstUrl(content) {
+    const match =
+        content.match(/https?:\/\/[^\s<>]+/i);
+
+    if (!match) {
+        return null;
+    }
+
+    return match[0].replace(/[),.!]+$/, '');
+}
+
+function extractGameTitle(content, url) {
+    let text = content;
+
+    if (url) {
+        text = text.replace(url, '');
+    }
+
+    text = text
+        .replace(/\*\*/g, '')
+        .replace(/__+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const firstLine =
+        text.split('\n')[0].trim();
+
+    return firstLine.slice(0, 128);
+}
+
 client.once(Events.ClientReady, (readyClient) => {
     console.log(`The bot is online as ${readyClient.user.tag}.`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
-    // Ignore bots
+    /*
+     * Let FreeStuff through before the generic
+     * "ignore bots" rule.
+     */
+    if (
+        FREESTUFF_BOT_ID &&
+        message.author.id === FREESTUFF_BOT_ID
+    ) {
+        const url =
+            extractFirstUrl(message.content);
+
+        if (!url) {
+            console.log(
+                '[game-play] FreeStuff message had no URL'
+            );
+
+            return;
+        }
+
+        const title =
+            extractGameTitle(
+                message.content,
+                url
+            );
+
+        if (!title) {
+            console.log(
+                '[game-play] Could not determine game title'
+            );
+
+            return;
+        }
+
+        const added =
+            enqueueGame({
+                title,
+                url,
+                messageId: message.id,
+                channelId: message.channelId,
+                source: 'freestuff',
+                discoveredAt: Date.now(),
+            });
+
+        if (added) {
+            startNextGame(client);
+        }
+
+        return;
+    }
+
+    // Ignore all other bots
     if (message.author.bot) return;
 
     // Ignore @everyone / @here
