@@ -1,7 +1,7 @@
 const { ActivityType } = require('discord.js');
 
-const MIN_PLAY_MINUTES = 10;
-const MAX_PLAY_MINUTES = 60;
+const MIN_PLAY_MINUTES = 1;
+const MAX_PLAY_MINUTES = 5;
 
 const queue = [];
 
@@ -57,7 +57,10 @@ function chooseRandomQueuedGame() {
 }
 
 function clearPlayingActivity(client) {
-    client.user.setActivity(null);
+    client.user.setPresence({
+        activities: [],
+        status: 'online',
+    });
 }
 
 function startNextGame(client) {
@@ -84,12 +87,15 @@ function startNextGame(client) {
         `${currentGame.title} for ${duration.minutes} minutes`
     );
 
-    client.user.setActivity(
-        currentGame.title,
-        {
-            type: ActivityType.Playing,
-        }
-    );
+    client.user.setPresence({
+        activities: [
+            {
+                name: currentGame.title,
+                type: ActivityType.Playing,
+            },
+        ],
+        status: 'online',
+    });
 
     playTimer = setTimeout(() => {
         finishCurrentGame(client);
