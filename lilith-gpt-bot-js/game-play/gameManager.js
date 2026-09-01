@@ -2,52 +2,27 @@ const {
     ActivityType,
 } = require('discord.js');
 
-/*
- * During testing you can shrink these.
- *
- * Production-ish values:
- * 10–60 minutes.
- */
 const MIN_PLAY_MINUTES = 10;
 const MAX_PLAY_MINUTES = 60;
 
-/*
- * Delay between discovering a game
- * and deciding to "play" it.
- */
 const MIN_DISCOVERY_DELAY_MINUTES = 2;
 const MAX_DISCOVERY_DELAY_MINUTES = 8;
 
 const queue = [];
-
 const scheduledGames = new Map();
 
 let currentGame = null;
 let playTimer = null;
 
-/*
- * Random integer between min and max,
- * inclusive.
- */
-function randomInteger(
-    min,
-    max
-) {
+function randomInteger(min, max) {
     return (
         Math.floor(
             Math.random() *
-                (
-                    max -
-                    min +
-                    1
-                )
+            (max - min + 1)
         ) + min
     );
 }
 
-/*
- * Determine how long Vesper "plays".
- */
 function randomPlayDurationMs() {
     const minutes =
         randomInteger(
@@ -57,17 +32,10 @@ function randomPlayDurationMs() {
 
     return {
         minutes,
-        ms:
-            minutes *
-            60 *
-            1000,
+        ms: minutes * 60 * 1000,
     };
 }
 
-/*
- * Determine how long Vesper waits
- * after discovering a game.
- */
 function randomDiscoveryDelayMs() {
     const minutes =
         randomInteger(
@@ -77,17 +45,10 @@ function randomDiscoveryDelayMs() {
 
     return {
         minutes,
-        ms:
-            minutes *
-            60 *
-            1000,
+        ms: minutes * 60 * 1000,
     };
 }
 
-/*
- * Check whether this game is already
- * queued, scheduled, or being played.
- */
 function gameAlreadyKnown(game) {
     if (!game?.url) {
         return false;
@@ -96,13 +57,11 @@ function gameAlreadyKnown(game) {
     const alreadyQueued =
         queue.some(
             (item) =>
-                item.url ===
-                game.url
+                item.url === game.url
         );
 
     const currentlyPlaying =
-        currentGame?.url ===
-        game.url;
+        currentGame?.url === game.url;
 
     const alreadyScheduled =
         scheduledGames.has(
@@ -116,15 +75,8 @@ function gameAlreadyKnown(game) {
     );
 }
 
-/*
- * Add a game directly to the hopper.
- */
 function enqueueGame(game) {
-    if (
-        gameAlreadyKnown(
-            game
-        )
-    ) {
+    if (gameAlreadyKnown(game)) {
         console.log(
             `[game-play] duplicate ignored: ${game.title}`
         );
@@ -141,22 +93,8 @@ function enqueueGame(game) {
     return true;
 }
 
-/*
- * Schedule a discovered game to enter
- * the hopper after a small random delay.
- *
- * This makes Vesper feel less like she
- * instantly reacts to MessageCreate.
- */
-function scheduleGame(
-    game,
-    client
-) {
-    if (
-        gameAlreadyKnown(
-            game
-        )
-    ) {
+function scheduleGame(game, client) {
+    if (gameAlreadyKnown(game)) {
         console.log(
             `[game-play] discovered duplicate ignored: ${game.title}`
         );
@@ -175,26 +113,17 @@ function scheduleGame(
     const timer =
         setTimeout(
             () => {
-                /*
-                 * Remove from scheduled state
-                 * before enqueueing.
-                 */
                 scheduledGames.delete(
                     game.url
                 );
 
                 const added =
-                    enqueueGame(
-                        game
-                    );
+                    enqueueGame(game);
 
                 if (added) {
-                    startNextGame(
-                        client
-                    );
+                    startNextGame(client);
                 }
             },
-
             delay.ms
         );
 
@@ -203,23 +132,16 @@ function scheduleGame(
         {
             game,
             timer,
-            scheduledAt:
-                Date.now(),
-            delayMinutes:
-                delay.minutes,
+            scheduledAt: Date.now(),
+            delayMinutes: delay.minutes,
         }
     );
 
     return true;
 }
 
-/*
- * Pick a random game from the hopper.
- */
 function chooseRandomQueuedGame() {
-    if (
-        queue.length === 0
-    ) {
+    if (queue.length === 0) {
         return null;
     }
 
@@ -235,26 +157,14 @@ function chooseRandomQueuedGame() {
     )[0];
 }
 
-/*
- * Clear Discord activity.
- */
-function clearPlayingActivity(
-    client
-) {
+function clearPlayingActivity(client) {
     client.user.setPresence({
         activities: [],
-        status:
-            'online',
+        status: 'online',
     });
 }
 
-/*
- * Begin playing the next random
- * queued game.
- */
-function startNextGame(
-    client
-) {
+function startNextGame(client) {
     if (
         currentGame ||
         queue.length === 0
@@ -274,12 +184,8 @@ function startNextGame(
 
     currentGame = {
         ...game,
-
-        startedAt:
-            Date.now(),
-
-        playMinutes:
-            duration.minutes,
+        startedAt: Date.now(),
+        playMinutes: duration.minutes,
     };
 
     console.log(
@@ -291,16 +197,11 @@ function startNextGame(
     client.user.setPresence({
         activities: [
             {
-                name:
-                    currentGame.title,
-
-                type:
-                    ActivityType.Playing,
+                name: currentGame.title,
+                type: ActivityType.Playing,
             },
         ],
-
-        status:
-            'online',
+        status: 'online',
     });
 
     console.log(
@@ -311,24 +212,13 @@ function startNextGame(
     playTimer =
         setTimeout(
             () => {
-                finishCurrentGame(
-                    client
-                );
+                finishCurrentGame(client);
             },
-
             duration.ms
         );
 }
 
-/*
- * Finish the active game,
- * clear Discord presence,
- * then immediately look for
- * another queued game.
- */
-function finishCurrentGame(
-    client
-) {
+function finishCurrentGame(client) {
     if (!currentGame) {
         return;
     }
@@ -340,37 +230,25 @@ function finishCurrentGame(
     currentGame = null;
 
     if (playTimer) {
-        clearTimeout(
-            playTimer
-        );
-
+        clearTimeout(playTimer);
         playTimer = null;
     }
 
-    clearPlayingActivity(
-        client
-    );
+    clearPlayingActivity(client);
 
     console.log(
         '[game-play] cleared playing activity'
     );
 
-    startNextGame(
-        client
-    );
+    startNextGame(client);
 }
 
-/*
- * Useful for future debugging / status commands.
- */
 function getCurrentGame() {
     return currentGame;
 }
 
 function getQueue() {
-    return [
-        ...queue,
-    ];
+    return [...queue];
 }
 
 function getScheduledGames() {
@@ -378,12 +256,9 @@ function getScheduledGames() {
         ...scheduledGames.values(),
     ].map(
         (entry) => ({
-            game:
-                entry.game,
-
+            game: entry.game,
             scheduledAt:
                 entry.scheduledAt,
-
             delayMinutes:
                 entry.delayMinutes,
         })

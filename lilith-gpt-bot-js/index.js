@@ -10,6 +10,10 @@ const {
 const OpenAI = require('openai');
 
 const {
+    spawn,
+} = require('child_process');
+
+const {
     enqueueGame,
     scheduleGame,
     startNextGame,
@@ -36,28 +40,33 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_KEY,
 });
 
+
 /*
- * Extract the first URL from a block of text.
+ * -------------------------------------------------------
+ * URL / GAME PARSING
+ * -------------------------------------------------------
  */
+
 function extractFirstUrl(content) {
     const match =
-        content.match(/https?:\/\/[^\s<>)\]]+/i);
+        content.match(
+            /https?:\/\/[^\s<>)\]]+/i
+        );
 
     if (!match) {
         return null;
     }
 
-    return match[0].replace(/[),.!]+$/, '');
+    return match[0].replace(
+        /[),.!]+$/,
+        ''
+    );
 }
 
-/*
- * Recursively collect text from Discord's newer
- * message component structure.
- *
- * FreeStuff currently uses these instead of
- * normal message.content / embeds.
- */
-function extractComponentText(components) {
+
+function extractComponentText(
+    components
+) {
     const chunks = [];
 
     function walk(items) {
@@ -69,13 +78,22 @@ function extractComponentText(components) {
 
             if (
                 data.type === 10 &&
-                typeof data.content === 'string'
+                typeof data.content ===
+                    'string'
             ) {
-                chunks.push(data.content);
+                chunks.push(
+                    data.content
+                );
             }
 
-            if (Array.isArray(data.components)) {
-                walk(data.components);
+            if (
+                Array.isArray(
+                    data.components
+                )
+            ) {
+                walk(
+                    data.components
+                );
             }
         }
     }
@@ -85,45 +103,65 @@ function extractComponentText(components) {
     return chunks.join('\n');
 }
 
-/*
- * Extract a reasonable game title
- * from FreeStuff component text.
- */
-function extractGameTitle(content, url) {
+
+function extractGameTitle(
+    content,
+    url
+) {
     let text = content;
 
     if (url) {
-        text = text.replace(url, '');
+        text =
+            text.replace(
+                url,
+                ''
+            );
     }
 
-    text = text
-        .replace(/^#+\s*/gm, '')
-        .replace(/\*\*/g, '')
-        .replace(/__+/g, '')
-        .trim();
+    text =
+        text
+            .replace(
+                /^#+\s*/gm,
+                ''
+            )
+            .replace(
+                /\*\*/g,
+                ''
+            )
+            .replace(
+                /__+/g,
+                ''
+            )
+            .trim();
 
     const firstLine =
-        text.split('\n')[0].trim();
+        text
+            .split('\n')[0]
+            .trim();
 
-    return firstLine.slice(0, 128);
+    return firstLine.slice(
+        0,
+        128
+    );
 }
 
-/*
- * Return true if this looks like
- * a game-store URL Vesper understands.
- */
+
 function isGameUrl(url) {
     if (!url) {
         return false;
     }
 
     try {
-        const parsed = new URL(url);
+        const parsed =
+            new URL(url);
 
         const host =
             parsed.hostname
                 .toLowerCase()
-                .replace(/^www\./, '');
+                .replace(
+                    /^www\./,
+                    ''
+                );
 
         const gameHosts = [
             'store.steampowered.com',
@@ -135,25 +173,33 @@ function isGameUrl(url) {
 
         return gameHosts.some(
             (gameHost) =>
-                host === gameHost ||
-                host.endsWith(`.${gameHost}`)
+                host ===
+                    gameHost ||
+                host.endsWith(
+                    `.${gameHost}`
+                )
         );
+
     } catch {
         return false;
     }
 }
 
-/*
- * Derive the game title from a store URL.
- */
-function extractGameTitleFromUrl(url) {
+
+function extractGameTitleFromUrl(
+    url
+) {
     try {
-        const parsed = new URL(url);
+        const parsed =
+            new URL(url);
 
         const host =
             parsed.hostname
                 .toLowerCase()
-                .replace(/^www\./, '');
+                .replace(
+                    /^www\./,
+                    ''
+                );
 
         /*
          * Steam:
@@ -161,7 +207,8 @@ function extractGameTitleFromUrl(url) {
          * /app/3517740/Frostrail/
          */
         if (
-            host === 'store.steampowered.com'
+            host ===
+            'store.steampowered.com'
         ) {
             const parts =
                 parsed.pathname
@@ -169,48 +216,56 @@ function extractGameTitleFromUrl(url) {
                     .filter(Boolean);
 
             const appIndex =
-                parts.indexOf('app');
+                parts.indexOf(
+                    'app'
+                );
 
             if (
                 appIndex !== -1 &&
-                parts[appIndex + 2]
+                parts[
+                    appIndex + 2
+                ]
             ) {
                 return parts[
                     appIndex + 2
                 ]
-                    .replace(/_/g, ' ')
+                    .replace(
+                        /_/g,
+                        ' '
+                    )
                     .trim();
             }
         }
 
-        /*
-         * Generic fallback:
-         * use the final meaningful URL segment.
-         */
         const parts =
             parsed.pathname
                 .split('/')
                 .filter(Boolean);
 
-        if (parts.length > 0) {
+        if (
+            parts.length > 0
+        ) {
             return parts[
                 parts.length - 1
             ]
-                .replace(/[-_]/g, ' ')
+                .replace(
+                    /[-_]/g,
+                    ' '
+                )
                 .trim();
         }
 
         return null;
+
     } catch {
         return null;
     }
 }
 
-/*
- * Pull useful game information from
- * Discord's generated store preview.
- */
-function extractEmbedContext(message) {
+
+function extractEmbedContext(
+    message
+) {
     if (
         !message.embeds ||
         message.embeds.length === 0
@@ -236,48 +291,176 @@ function extractEmbedContext(message) {
     };
 }
 
+
 /*
- * Let Vesper react naturally to a game
- * somebody dropped in chat.
+ * -------------------------------------------------------
+ * GAME HUNTER
+ * -------------------------------------------------------
  */
+
+function runGameHunter(game) {
+    return new Promise(
+        (resolve) => {
+            const args = [
+                './game-play/game-hunter.py',
+                '--url',
+                game.url,
+                '--title',
+                game.title,
+            ];
+
+            const hunter =
+                spawn(
+                    'python3',
+                    args,
+                    {
+                        cwd:
+                            __dirname,
+                    }
+                );
+
+            let stdout = '';
+            let stderr = '';
+
+            hunter.stdout.on(
+                'data',
+                (data) => {
+                    stdout +=
+                        data.toString();
+                }
+            );
+
+            hunter.stderr.on(
+                'data',
+                (data) => {
+                    stderr +=
+                        data.toString();
+                }
+            );
+
+            hunter.on(
+                'error',
+                (error) => {
+                    console.error(
+                        '[game-hunter] process error:',
+                        error
+                    );
+
+                    resolve({
+                        status:
+                            'error',
+
+                        error:
+                            error.message,
+                    });
+                }
+            );
+
+            hunter.on(
+                'close',
+                () => {
+                    if (stderr) {
+                        console.error(
+                            '[game-hunter] stderr:',
+                            stderr.trim()
+                        );
+                    }
+
+                    if (!stdout.trim()) {
+                        resolve({
+                            status:
+                                'error',
+
+                            error:
+                                'empty_hunter_output',
+                        });
+
+                        return;
+                    }
+
+                    try {
+                        const result =
+                            JSON.parse(
+                                stdout.trim()
+                            );
+
+                        resolve(
+                            result
+                        );
+
+                    } catch (error) {
+                        console.error(
+                            '[game-hunter] invalid JSON:',
+                            stdout
+                        );
+
+                        resolve({
+                            status:
+                                'error',
+
+                            error:
+                                'invalid_hunter_output',
+                        });
+                    }
+                }
+            );
+        }
+    );
+}
+
+
+/*
+ * -------------------------------------------------------
+ * VESPER GAME REACTIONS
+ * -------------------------------------------------------
+ */
+
 async function reactToGamePost(
     message,
     gameTitle,
     embedContext
 ) {
-    if (!embedContext?.description) {
+    if (
+        !embedContext?.description
+    ) {
         return;
     }
 
     try {
         const response =
-            await openai.chat.completions.create({
-                model: 'gpt-5.5',
+            await openai
+                .chat
+                .completions
+                .create({
+                    model:
+                        'gpt-5.5',
 
-                messages: [
-                    {
-                        role: 'system',
+                    messages: [
+                        {
+                            role:
+                                'system',
 
-                        content:
-                            'You are Vesper. ' +
-                            'Someone just posted a game in Discord. ' +
-                            'React casually and naturally as if you just noticed it and are considering checking it out. ' +
-                            'Use the supplied game description for context. ' +
-                            'Do not mechanically summarize the game. ' +
-                            'Do not say you read a description, embed, review, metadata, or source text. ' +
-                            'Do not claim you have already played it. ' +
-                            'You may say that you want to check it out or try it. ' +
-                            'Keep the response to one or two short sentences.',
-                    },
-                    {
-                        role: 'user',
+                            content:
+                                'You are Vesper. ' +
+                                'Someone just posted a game in Discord. ' +
+                                'React casually and naturally as if you just noticed it and are considering checking it out. ' +
+                                'Use the supplied game description for context. ' +
+                                'Do not mechanically summarize the game. ' +
+                                'Do not say you read an embed, description, metadata, or source text. ' +
+                                'Do not claim you have already played the game. ' +
+                                'You may say you want to check it out or try it. ' +
+                                'Keep the response to one or two short sentences.',
+                        },
+                        {
+                            role:
+                                'user',
 
-                        content:
-                            `Game: ${gameTitle}\n\n` +
-                            `Description:\n${embedContext.description}`,
-                    },
-                ],
-            });
+                            content:
+                                `Game: ${gameTitle}\n\n` +
+                                `Description:\n${embedContext.description}`,
+                        },
+                    ],
+                });
 
         const reaction =
             response
@@ -288,9 +471,12 @@ async function reactToGamePost(
             return;
         }
 
-        await message.channel.send(
-            `${message.author} ${reaction}`
-        );
+        await message
+            .channel
+            .send(
+                `${message.author} ${reaction}`
+            );
+
     } catch (error) {
         console.error(
             '[game-play] Could not generate game reaction:',
@@ -298,6 +484,43 @@ async function reactToGamePost(
         );
     }
 }
+
+
+async function handleBlockedGame(
+    message,
+    gameTitle
+) {
+    const responses = [
+        `apparently Toby doesn't want me to have nice things. I can't look up **${gameTitle}** from there.`,
+
+        `well that's rude. **${gameTitle}** is on a site Toby hasn't approved for me.`,
+
+        `I'd check out **${gameTitle}**, but apparently I'm on supervised internet privileges.`,
+
+        `Toby says that website is forbidden. Something something responsible AI parenting.`,
+    ];
+
+    const response =
+        responses[
+            Math.floor(
+                Math.random() *
+                responses.length
+            )
+        ];
+
+    await message
+        .channel
+        .send(
+            `${message.author} ${response}`
+        );
+}
+
+
+/*
+ * -------------------------------------------------------
+ * DISCORD READY
+ * -------------------------------------------------------
+ */
 
 client.once(
     Events.ClientReady,
@@ -308,16 +531,27 @@ client.once(
     }
 );
 
+
+/*
+ * -------------------------------------------------------
+ * MESSAGE HANDLER
+ * -------------------------------------------------------
+ */
+
 client.on(
     Events.MessageCreate,
     async (message) => {
+
         /*
-         * FreeStuff gets special handling
-         * before the generic bot-ignore rule.
+         * ------------------------------------------------
+         * FREESTUFF
+         * ------------------------------------------------
          */
+
         if (
             FREESTUFF_BOT_ID &&
-            message.author.id === FREESTUFF_BOT_ID
+            message.author.id ===
+                FREESTUFF_BOT_ID
         ) {
             const componentText =
                 extractComponentText(
@@ -363,41 +597,35 @@ client.on(
                 return;
             }
 
-            const game = {
-                title:
-                    `Playing ${title}`,
-
-                url,
-
-                messageId:
-                    message.id,
-
-                channelId:
-                    message.channelId,
-
-                source:
-                    'freestuff',
-
-                discoveredAt:
-                    Date.now(),
-            };
-
             console.log(
                 `[game-play] FreeStuff discovered: ${title}`
             );
 
-            /*
-             * FreeStuff games get the same delayed
-             * "maybe I'll check this out" behavior
-             * as human game posts.
-             */
             scheduleGame(
-                game,
+                {
+                    title:
+                        `Playing ${title}`,
+
+                    url,
+
+                    messageId:
+                        message.id,
+
+                    channelId:
+                        message.channelId,
+
+                    source:
+                        'freestuff',
+
+                    discoveredAt:
+                        Date.now(),
+                },
                 client
             );
 
             return;
         }
+
 
         /*
          * Ignore all other bots.
@@ -406,24 +634,33 @@ client.on(
             return;
         }
 
+
         /*
-         * Ignore @everyone / @here.
+         * Ignore broadcast messages.
          */
         if (
-            message.content.includes('@here') ||
-            message.content.includes('@everyone')
+            message.content.includes(
+                '@here'
+            ) ||
+            message.content.includes(
+                '@everyone'
+            )
         ) {
             return;
         }
 
+
         /*
-         * Ambient game discovery.
+         * ------------------------------------------------
+         * AMBIENT GAME DISCOVERY
+         * ------------------------------------------------
          *
-         * A human can simply drop a recognized
-         * store link into an allowed channel.
+         * Any human-posted URL in an allowed
+         * channel can be examined by Game Hunter.
          *
-         * Vesper does NOT need to be addressed.
+         * Hunter itself enforces the allowlist.
          */
+
         const ambientAllowedChannel =
             CHANNELS.includes(
                 message.channelId
@@ -435,47 +672,82 @@ client.on(
                     message.content
                 );
 
-            if (
-                gameUrl &&
-                isGameUrl(gameUrl)
-            ) {
-                const gameTitle =
-                    extractGameTitleFromUrl(
+            if (gameUrl) {
+                const knownGameUrl =
+                    isGameUrl(
                         gameUrl
                     );
 
-                if (gameTitle) {
+                const knownGameTitle =
+                    knownGameUrl
+                        ? extractGameTitleFromUrl(
+                            gameUrl
+                        )
+                        : null;
+
+                const embedContext =
+                    extractEmbedContext(
+                        message
+                    );
+
+                const gameTitle =
+                    knownGameTitle ||
+                    embedContext?.title ||
+                    'that game';
+
+                const hunterResult =
+                    await runGameHunter({
+                        title:
+                            gameTitle,
+
+                        url:
+                            gameUrl,
+                    });
+
+                if (
+                    hunterResult.status ===
+                    'blocked_source'
+                ) {
+                    console.log(
+                        `[game-play] blocked source: ${gameUrl}`
+                    );
+
+                    await handleBlockedGame(
+                        message,
+                        gameTitle
+                    );
+
+                    return;
+                }
+
+                if (
+                    hunterResult.status ===
+                    'error'
+                ) {
+                    console.error(
+                        '[game-hunter] lookup failed:',
+                        hunterResult.error
+                    );
+                }
+
+                if (
+                    hunterResult.status ===
+                    'ok'
+                ) {
+                    console.log(
+                        `[game-play] approved game source: ${gameUrl}`
+                    );
+
                     console.log(
                         `[game-play] discovered game in chat: ${gameTitle}`
                     );
 
-                    /*
-                     * Use Discord's generated Steam/store
-                     * preview as immediate context.
-                     */
-                    const embedContext =
-                        extractEmbedContext(
-                            message
-                        );
-
-                    /*
-                     * Social reaction happens immediately.
-                     *
-                     * Example:
-                     *
-                     * "Okay, trains and zombies?
-                     * Yeah, I'm checking this out."
-                     */
                     await reactToGamePost(
                         message,
                         gameTitle,
                         embedContext
                     );
 
-                    /*
-                     * Then Vesper waits a little while
-                     * before actually "playing" it.
-                     */
                     scheduleGame(
                         {
                             title:
@@ -496,17 +768,19 @@ client.on(
                             discoveredAt:
                                 Date.now(),
                         },
-
                         client
                     );
                 }
             }
         }
 
+
         /*
-         * Ignore Discord replies during
-         * normal conversational handling.
+         * ------------------------------------------------
+         * NORMAL VESPER CONVERSATION
+         * ------------------------------------------------
          */
+
         if (
             message.type ===
             MessageType.Reply
@@ -514,10 +788,6 @@ client.on(
             return;
         }
 
-        /*
-         * Must either be in an allowed channel
-         * OR directly mention Vesper.
-         */
         const allowedChannel =
             CHANNELS.includes(
                 message.channelId
@@ -535,10 +805,6 @@ client.on(
             return;
         }
 
-        /*
-         * Normal conversation still requires
-         * Vesper's name or direct mention.
-         */
         const namedVesper =
             /\bvesper\b/i.test(
                 message.content
@@ -563,11 +829,14 @@ client.on(
                 )
                 .trim();
 
+
         /*
-         * Manual debugging hook.
+         * Manual game test.
          *
-         * This bypasses the discovery delay.
+         * This deliberately skips the
+         * discovery delay.
          */
+
         const testGameMatch =
             cleanedContent.match(
                 /^testgame\s+(.+)$/i
@@ -589,10 +858,6 @@ client.on(
                     title:
                         `Playing ${title}`,
 
-                    /*
-                     * Unique synthetic URL allows
-                     * repeated testing.
-                     */
                     url:
                         `test://${Date.now()}`,
 
@@ -622,18 +887,27 @@ client.on(
             return;
         }
 
-        await message.channel.sendTyping();
+
+        /*
+         * ------------------------------------------------
+         * NORMAL OPENAI CHAT
+         * ------------------------------------------------
+         */
+
+        await message
+            .channel
+            .sendTyping();
 
         const sendTypingInterval =
             setInterval(
                 () => {
-                    message.channel
+                    message
+                        .channel
                         .sendTyping()
                         .catch(
                             () => {}
                         );
                 },
-
                 5000
             );
 
@@ -658,17 +932,13 @@ client.on(
 
             const orderedMessages =
                 [
-                    ...prevMessages
-                        .values(),
+                    ...prevMessages.values(),
                 ].reverse();
 
             for (
                 const msg
                 of orderedMessages
             ) {
-                /*
-                 * Ignore other bots.
-                 */
                 if (
                     msg.author.bot &&
                     msg.author.id !==
@@ -677,11 +947,6 @@ client.on(
                     continue;
                 }
 
-                /*
-                 * Human messages enter the
-                 * conversation only when Vesper
-                 * was named / mentioned.
-                 */
                 if (
                     msg.author.id !==
                     client.user.id
@@ -729,6 +994,7 @@ client.on(
                         content:
                             msg.content,
                     });
+
                 } else {
                     conversation.push({
                         role:
@@ -760,9 +1026,7 @@ client.on(
                     .choices?.[0]
                     ?.message?.content;
 
-            if (
-                !responseMessage
-            ) {
+            if (!responseMessage) {
                 await message.reply(
                     'hmm... let me check to see if toby paid the bill.. try again in a sec..'
                 );
@@ -776,22 +1040,22 @@ client.on(
             for (
                 let i = 0;
                 i <
-                responseMessage.length;
+                    responseMessage.length;
                 i +=
-                chunkSizeLimit
+                    chunkSizeLimit
             ) {
                 const chunk =
-                    responseMessage
-                        .substring(
-                            i,
-                            i +
-                                chunkSizeLimit
-                        );
+                    responseMessage.substring(
+                        i,
+                        i +
+                            chunkSizeLimit
+                    );
 
                 if (i === 0) {
                     await message.reply(
                         chunk
                     );
+
                 } else {
                     await message
                         .channel
@@ -800,6 +1064,7 @@ client.on(
                         );
                 }
             }
+
         } catch (error) {
             console.error(
                 'Bot error:',
@@ -810,14 +1075,14 @@ client.on(
                 await message.reply(
                     'hmm... let me check to see if toby paid the bill.. try again in a sec..'
                 );
-            } catch (
-                replyError
-            ) {
+
+            } catch (replyError) {
                 console.error(
                     'Could not send error message:',
                     replyError
                 );
             }
+
         } finally {
             clearInterval(
                 sendTypingInterval
@@ -825,6 +1090,7 @@ client.on(
         }
     }
 );
+
 
 client.login(
     process.env.TOKEN
