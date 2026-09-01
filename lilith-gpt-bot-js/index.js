@@ -36,11 +36,11 @@ const openai = new OpenAI({
 });
 
 /*
- * Game-play message parsing
+ * Extract the first URL from a block of text.
  */
 function extractFirstUrl(content) {
     const match =
-        content.match(/https?:\/\/[^\s<>]+/i);
+        content.match(/https?:\/\/[^\s<>)\]]+/i);
 
     if (!match) {
         return null;
@@ -49,6 +49,46 @@ function extractFirstUrl(content) {
     return match[0].replace(/[),.!]+$/, '');
 }
 
+/*
+ * Recursively collect text from Discord's newer
+ * message component structure.
+ *
+ * FreeStuff currently puts its game announcement
+ * inside nested type-10 text components rather than
+ * normal message.content or embeds.
+ */
+function extractComponentText(components) {
+    const chunks = [];
+
+    function walk(items) {
+        for (const item of items) {
+            const data =
+                item.toJSON
+                    ? item.toJSON()
+                    : item;
+
+            if (
+                data.type === 10 &&
+                typeof data.content === 'string'
+            ) {
+                chunks.push(data.content);
+            }
+
+            if (Array.isArray(data.components)) {
+                walk(data.components);
+            }
+        }
+    }
+
+    walk(components);
+
+    return chunks.join('\n');
+}
+
+/*
+ * Extract a reasonable game title from the
+ * FreeStuff text block.
+ */
 function extractGameTitle(content, url) {
     let text = content;
 
@@ -56,20 +96,32 @@ function extractGameTitle(content, url) {
         text = text.replace(url, '');
     }
 
-    /*
-     * Strip common markdown / punctuation noise.
-     */
     text = text
+        /*
+         * Strip markdown heading markers.
+         *
+         * Example:
+         * ### Game name here
+         *
+         * becomes:
+         * Game name here
+         */
+        .replace(/^#+\s*/gm, '')
+
+        /*
+         * Strip basic markdown emphasis.
+         */
         .replace(/\*\*/g, '')
         .replace(/__+/g, '')
-        .replace(/\s+/g, ' ')
+
+        /*
+         * Clean up whitespace.
+         */
         .trim();
 
     /*
-     * Temporary fallback.
-     *
-     * Once we see the actual FreeStuff message format,
-     * we'll make this smarter.
+     * The first line of the FreeStuff component
+     * is currently the game title.
      */
     const firstLine =
         text.split('\n')[0].trim();
@@ -92,8 +144,30 @@ client.on(Events.MessageCreate, async (message) => {
         FREESTUFF_BOT_ID &&
         message.author.id === FREESTUFF_BOT_ID
     ) {
+        /*
+         * FreeStuff's newer message format uses
+         * Discord components instead of normal
+         * message content.
+         */
+        const componentText =
+            extractComponentText(
+                message.components
+            );
+
+        const sourceText =
+            message.content ||
+            componentText;
+
+        if (!sourceText) {
+            console.log(
+                '[game-play] FreeStuff message had no readable text'
+            );
+
+            return;
+        }
+
         const url =
-            extractFirstUrl(message.content);
+            extractFirstUrl(sourceText);
 
         if (!url) {
             console.log(
@@ -105,7 +179,7 @@ client.on(Events.MessageCreate, async (message) => {
 
         const title =
             extractGameTitle(
-                message.content,
+                sourceText,
                 url
             );
 
@@ -119,7 +193,12 @@ client.on(Events.MessageCreate, async (message) => {
 
         const added =
             enqueueGame({
-                title,
+                /*
+                 * Discord isn't consistently rendering
+                 * the literal "Playing" prefix for bot
+                 * activities, so keep it in the name.
+                 */
+                title: `Playing ${title}`,
                 url,
                 messageId: message.id,
                 channelId: message.channelId,
@@ -128,18 +207,26 @@ client.on(Events.MessageCreate, async (message) => {
             });
 
         if (added) {
+            console.log(
+                `[game-play] FreeStuff queued: ${title}`
+            );
+
             startNextGame(client);
         }
 
         return;
     }
 
-    // Ignore all other bots.
+    /*
+     * Ignore all other bots.
+     */
     if (message.author.bot) {
         return;
     }
 
-    // Ignore @everyone / @here.
+    /*
+     * Ignore @everyone / @here.
+     */
     if (
         message.content.includes('@here') ||
         message.content.includes('@everyone')
@@ -148,10 +235,8 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     /*
-     * Ignore Discord replies during normal conversation.
-     *
-     * Game-play can eventually get its own reply handling
-     * if we need it.
+     * Ignore Discord replies during normal
+     * conversational handling.
      */
     if (message.type === MessageType.Reply) {
         return;
@@ -165,7 +250,9 @@ client.on(Events.MessageCreate, async (message) => {
         CHANNELS.includes(message.channelId);
 
     const mentionedBot =
-        message.mentions.users.has(client.user.id);
+        message.mentions.users.has(
+            client.user.id
+        );
 
     if (!allowedChannel && !mentionedBot) {
         return;
@@ -180,7 +267,9 @@ client.on(Events.MessageCreate, async (message) => {
      * @mentions the bot.
      */
     const namedVesper =
-        /\bvesper\b/i.test(message.content);
+        /\bvesper\b/i.test(
+            message.content
+        );
 
     if (!namedVesper && !mentionedBot) {
         return;
@@ -188,16 +277,8 @@ client.on(Events.MessageCreate, async (message) => {
 
     /*
      * Remove Vesper's name / direct mention so
-     * command parsing can work against the
-     * meaningful part of the message.
-     *
-     * Example:
-     *
-     *   Vesper testgame Quake
-     *
-     * becomes:
-     *
-     *   testgame Quake
+     * command parsing operates on the meaningful
+     * part of the message.
      */
     const cleanedContent =
         message.content
@@ -212,7 +293,7 @@ client.on(Events.MessageCreate, async (message) => {
      *
      *   Vesper testgame Quake
      *   Vesper testgame Chicken
-     *   Vesper testgame Dredge
+     *   Vesper testgame Enshrouded
      */
     const testGameMatch =
         cleanedContent.match(
@@ -220,17 +301,32 @@ client.on(Events.MessageCreate, async (message) => {
         );
 
     if (testGameMatch) {
-        const title =
+        let title =
             testGameMatch[1].trim();
+
+        /*
+         * Let either of these work:
+         *
+         *   Vesper testgame Quake
+         *   Vesper testgame Playing Quake
+         */
+        title = title.replace(
+            /^playing\s+/i,
+            ''
+        );
 
         const added =
             enqueueGame({
-                title,
+                /*
+                 * Keep the visible activity wording
+                 * consistent with FreeStuff games.
+                 */
+                title: `Playing ${title}`,
 
                 /*
-                 * Give every manual test a unique URL
-                 * so duplicate detection doesn't block
-                 * repeated testing of the same title.
+                 * Each manual test gets a unique URL
+                 * so repeated testing of the same
+                 * game isn't blocked as a duplicate.
                  */
                 url: `test://${Date.now()}`,
 
@@ -280,8 +376,7 @@ client.on(Events.MessageCreate, async (message) => {
             /*
              * Ignore other bots.
              *
-             * Keep Vesper's own messages so
-             * conversational context persists.
+             * Keep Vesper's own previous replies.
              */
             if (
                 msg.author.bot &&
@@ -291,9 +386,9 @@ client.on(Events.MessageCreate, async (message) => {
             }
 
             /*
-             * For human messages, only include
-             * messages where Vesper was named
-             * or directly mentioned.
+             * For users, only include messages
+             * where Vesper was named or directly
+             * mentioned.
              */
             if (
                 msg.author.id !== client.user.id
@@ -377,8 +472,8 @@ client.on(Events.MessageCreate, async (message) => {
              * First chunk replies directly
              * to the user.
              *
-             * Remaining chunks are sent
-             * normally so Discord doesn't
+             * Remaining chunks just go into
+             * the channel so Discord doesn't
              * create repeated reply pings.
              */
             if (i === 0) {
@@ -407,8 +502,7 @@ client.on(Events.MessageCreate, async (message) => {
         }
     } finally {
         /*
-         * Always stop the typing interval,
-         * even if Discord/OpenAI throws.
+         * Always stop the typing interval.
          */
         clearInterval(
             sendTypingInterval
