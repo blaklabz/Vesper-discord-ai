@@ -166,6 +166,39 @@ client.on(Events.MessageCreate, async (message) => {
         return;
     }
 
+    const cleanedContent = message.content
+        .replace(/<@!?\d+>/g, '')
+        .replace(/\bvesper\b/gi, '')
+        .trim();
+
+    const testGameMatch =
+        cleanedContent.match(/^testgame\s+(.+)$/i);
+
+    if (testGameMatch) {
+        const title =
+            testGameMatch[1].trim();
+
+        const added =
+            enqueueGame({
+                title,
+                url: `test://${Date.now()}`,
+                messageId: message.id,
+                channelId: message.channelId,
+                source: 'manual-test',
+                discoveredAt: Date.now(),
+            });
+
+        if (added) {
+            startNextGame(client);
+
+            await message.reply(
+                `queued **${title}**`
+            );
+        }
+
+        return;
+    }
+
     await message.channel.sendTyping();
 
     const sendTypingInterval = setInterval(() => {
