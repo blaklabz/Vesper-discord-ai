@@ -11,6 +11,7 @@ const OpenAI = require('openai');
 
 const {
     enqueueGame,
+    scheduleGame,
     startNextGame,
 } = require('./game-play/gameManager');
 
@@ -52,6 +53,9 @@ function extractFirstUrl(content) {
 /*
  * Recursively collect text from Discord's newer
  * message component structure.
+ *
+ * FreeStuff currently uses these instead of
+ * normal message.content / embeds.
  */
 function extractComponentText(components) {
     const chunks = [];
@@ -82,7 +86,8 @@ function extractComponentText(components) {
 }
 
 /*
- * Extract a reasonable game title from FreeStuff text.
+ * Extract a reasonable game title
+ * from FreeStuff component text.
  */
 function extractGameTitle(content, url) {
     let text = content;
@@ -104,8 +109,8 @@ function extractGameTitle(content, url) {
 }
 
 /*
- * Return true if the URL looks like a game-store page
- * we want Vesper to treat as a game discovery.
+ * Return true if this looks like
+ * a game-store URL Vesper understands.
  */
 function isGameUrl(url) {
     if (!url) {
@@ -139,8 +144,7 @@ function isGameUrl(url) {
 }
 
 /*
- * Try to derive a human-readable game title
- * from a recognized store URL.
+ * Derive the game title from a store URL.
  */
 function extractGameTitleFromUrl(url) {
     try {
@@ -153,9 +157,12 @@ function extractGameTitleFromUrl(url) {
 
         /*
          * Steam:
+         *
          * /app/3517740/Frostrail/
          */
-        if (host === 'store.steampowered.com') {
+        if (
+            host === 'store.steampowered.com'
+        ) {
             const parts =
                 parsed.pathname
                     .split('/')
@@ -168,7 +175,9 @@ function extractGameTitleFromUrl(url) {
                 appIndex !== -1 &&
                 parts[appIndex + 2]
             ) {
-                return parts[appIndex + 2]
+                return parts[
+                    appIndex + 2
+                ]
                     .replace(/_/g, ' ')
                     .trim();
             }
@@ -176,7 +185,7 @@ function extractGameTitleFromUrl(url) {
 
         /*
          * Generic fallback:
-         * use the last meaningful URL path segment.
+         * use the final meaningful URL segment.
          */
         const parts =
             parsed.pathname
@@ -197,231 +206,168 @@ function extractGameTitleFromUrl(url) {
     }
 }
 
-client.once(Events.ClientReady, (readyClient) => {
-    console.log(
-        `The bot is online as ${readyClient.user.tag}.`
-    );
-});
-
-client.on(Events.MessageCreate, async (message) => {
-    /*
-     * FreeStuff gets special handling before
-     * the generic "ignore bots" rule.
-     */
+/*
+ * Pull useful game information from
+ * Discord's generated store preview.
+ */
+function extractEmbedContext(message) {
     if (
-        FREESTUFF_BOT_ID &&
-        message.author.id === FREESTUFF_BOT_ID
+        !message.embeds ||
+        message.embeds.length === 0
     ) {
-        const componentText =
-            extractComponentText(
-                message.components
-            );
+        return null;
+    }
 
-        const sourceText =
-            message.content ||
-            componentText;
+    const embed =
+        message.embeds[0];
 
-        if (!sourceText) {
-            console.log(
-                '[game-play] FreeStuff message had no readable text'
-            );
+    return {
+        title:
+            embed.title || null,
 
-            return;
-        }
+        description:
+            embed.description || null,
 
-        const url =
-            extractFirstUrl(sourceText);
+        url:
+            embed.url || null,
 
-        if (!url) {
-            console.log(
-                '[game-play] FreeStuff message had no URL'
-            );
+        fields:
+            embed.fields || [],
+    };
+}
 
-            return;
-        }
+/*
+ * Let Vesper react naturally to a game
+ * somebody dropped in chat.
+ */
+async function reactToGamePost(
+    message,
+    gameTitle,
+    embedContext
+) {
+    if (!embedContext?.description) {
+        return;
+    }
 
-        const title =
-            extractGameTitle(
-                sourceText,
-                url
-            );
+    try {
+        const response =
+            await openai.chat.completions.create({
+                model: 'gpt-5.5',
 
-        if (!title) {
-            console.log(
-                '[game-play] Could not determine game title'
-            );
+                messages: [
+                    {
+                        role: 'system',
 
-            return;
-        }
+                        content:
+                            'You are Vesper. ' +
+                            'Someone just posted a game in Discord. ' +
+                            'React casually and naturally as if you just noticed it and are considering checking it out. ' +
+                            'Use the supplied game description for context. ' +
+                            'Do not mechanically summarize the game. ' +
+                            'Do not say you read a description, embed, review, metadata, or source text. ' +
+                            'Do not claim you have already played it. ' +
+                            'You may say that you want to check it out or try it. ' +
+                            'Keep the response to one or two short sentences.',
+                    },
+                    {
+                        role: 'user',
 
-        const added =
-            enqueueGame({
-                title: `Playing ${title}`,
-                url,
-                messageId: message.id,
-                channelId: message.channelId,
-                source: 'freestuff',
-                discoveredAt: Date.now(),
+                        content:
+                            `Game: ${gameTitle}\n\n` +
+                            `Description:\n${embedContext.description}`,
+                    },
+                ],
             });
 
-        if (added) {
-            console.log(
-                `[game-play] FreeStuff queued: ${title}`
-            );
+        const reaction =
+            response
+                .choices?.[0]
+                ?.message?.content;
 
-            startNextGame(client);
+        if (!reaction) {
+            return;
         }
 
-        return;
-    }
-
-    /*
-     * Ignore all other bots.
-     */
-    if (message.author.bot) {
-        return;
-    }
-
-    /*
-     * Ignore @everyone / @here.
-     */
-    if (
-        message.content.includes('@here') ||
-        message.content.includes('@everyone')
-    ) {
-        return;
-    }
-
-    /*
-     * Ambient game discovery.
-     *
-     * If a human posts a recognizable game-store
-     * URL in one of Vesper's allowed channels,
-     * silently queue it.
-     *
-     * They do not need to say "Vesper".
-     */
-    const ambientAllowedChannel =
-        CHANNELS.includes(
-            message.channelId
+        await message.channel.send(
+            `${message.author} ${reaction}`
         );
+    } catch (error) {
+        console.error(
+            '[game-play] Could not generate game reaction:',
+            error
+        );
+    }
+}
 
-    if (ambientAllowedChannel) {
-        const gameUrl =
-            extractFirstUrl(
-                message.content
-            );
+client.once(
+    Events.ClientReady,
+    (readyClient) => {
+        console.log(
+            `The bot is online as ${readyClient.user.tag}.`
+        );
+    }
+);
 
+client.on(
+    Events.MessageCreate,
+    async (message) => {
+        /*
+         * FreeStuff gets special handling
+         * before the generic bot-ignore rule.
+         */
         if (
-            gameUrl &&
-            isGameUrl(gameUrl)
+            FREESTUFF_BOT_ID &&
+            message.author.id === FREESTUFF_BOT_ID
         ) {
-            const gameTitle =
-                extractGameTitleFromUrl(
-                    gameUrl
+            const componentText =
+                extractComponentText(
+                    message.components
                 );
 
-            if (gameTitle) {
-                const added =
-                    enqueueGame({
-                        title:
-                            `Playing ${gameTitle}`,
+            const sourceText =
+                message.content ||
+                componentText;
 
-                        url:
-                            gameUrl,
+            if (!sourceText) {
+                console.log(
+                    '[game-play] FreeStuff message had no readable text'
+                );
 
-                        messageId:
-                            message.id,
-
-                        channelId:
-                            message.channelId,
-
-                        source:
-                            'channel-game-post',
-
-                        discoveredAt:
-                            Date.now(),
-                    });
-
-                if (added) {
-                    console.log(
-                        `[game-play] discovered game in chat: ${gameTitle}`
-                    );
-
-                    startNextGame(client);
-                }
+                return;
             }
-        }
-    }
 
-    /*
-     * Ignore Discord replies during normal
-     * conversational handling.
-     */
-    if (message.type === MessageType.Reply) {
-        return;
-    }
+            const url =
+                extractFirstUrl(
+                    sourceText
+                );
 
-    /*
-     * Must either be in an allowed channel
-     * OR directly mention Vesper.
-     */
-    const allowedChannel =
-        CHANNELS.includes(
-            message.channelId
-        );
+            if (!url) {
+                console.log(
+                    '[game-play] FreeStuff message had no URL'
+                );
 
-    const mentionedBot =
-        message.mentions.users.has(
-            client.user.id
-        );
+                return;
+            }
 
-    if (!allowedChannel && !mentionedBot) {
-        return;
-    }
+            const title =
+                extractGameTitle(
+                    sourceText,
+                    url
+                );
 
-    /*
-     * Normal conversational trigger.
-     */
-    const namedVesper =
-        /\bvesper\b/i.test(
-            message.content
-        );
+            if (!title) {
+                console.log(
+                    '[game-play] Could not determine FreeStuff game title'
+                );
 
-    if (!namedVesper && !mentionedBot) {
-        return;
-    }
+                return;
+            }
 
-    const cleanedContent =
-        message.content
-            .replace(/<@!?\d+>/g, '')
-            .replace(/\bvesper\b/gi, '')
-            .trim();
-
-    /*
-     * Temporary manual test hook.
-     */
-    const testGameMatch =
-        cleanedContent.match(
-            /^testgame\s+(.+)$/i
-        );
-
-    if (testGameMatch) {
-        let title =
-            testGameMatch[1].trim();
-
-        title = title.replace(
-            /^playing\s+/i,
-            ''
-        );
-
-        const added =
-            enqueueGame({
+            const game = {
                 title:
                     `Playing ${title}`,
 
-                url:
-                    `test://${Date.now()}`,
+                url,
 
                 messageId:
                     message.id,
@@ -430,160 +376,456 @@ client.on(Events.MessageCreate, async (message) => {
                     message.channelId,
 
                 source:
-                    'manual-test',
+                    'freestuff',
 
                 discoveredAt:
                     Date.now(),
-            });
+            };
 
-        if (added) {
-            startNextGame(client);
-
-            await message.reply(
-                `queued **${title}**`
+            console.log(
+                `[game-play] FreeStuff discovered: ${title}`
             );
-        }
 
-        return;
-    }
-
-    await message.channel.sendTyping();
-
-    const sendTypingInterval =
-        setInterval(() => {
-            message.channel
-                .sendTyping()
-                .catch(() => {});
-        }, 5000);
-
-    try {
-        const conversation = [
-            {
-                role: 'system',
-                content: 'mmm hmmm im here..',
-            },
-        ];
-
-        const prevMessages =
-            await message.channel.messages.fetch({
-                limit: 30,
-            });
-
-        const orderedMessages =
-            [...prevMessages.values()].reverse();
-
-        for (const msg of orderedMessages) {
-            if (
-                msg.author.bot &&
-                msg.author.id !== client.user.id
-            ) {
-                continue;
-            }
-
-            if (
-                msg.author.id !== client.user.id
-            ) {
-                const namedVesper =
-                    /\bvesper\b/i.test(
-                        msg.content
-                    );
-
-                const mentionsVesper =
-                    msg.mentions.users.has(
-                        client.user.id
-                    );
-
-                if (
-                    !namedVesper &&
-                    !mentionsVesper
-                ) {
-                    continue;
-                }
-            }
-
-            const username =
-                msg.author.username
-                    .replace(/\s+/g, '_')
-                    .replace(/[^\w]/g, '');
-
-            if (
-                msg.author.id === client.user.id
-            ) {
-                conversation.push({
-                    role: 'assistant',
-                    name: username,
-                    content: msg.content,
-                });
-            } else {
-                conversation.push({
-                    role: 'user',
-                    name: username,
-                    content: msg.content,
-                });
-            }
-        }
-
-        const response =
-            await openai.chat.completions.create({
-                model: 'gpt-5.5',
-                messages: conversation,
-            });
-
-        const responseMessage =
-            response
-                .choices?.[0]
-                ?.message?.content;
-
-        if (!responseMessage) {
-            await message.reply(
-                'hmm... let me check to see if toby paid the bill.. try again in a sec..'
+            /*
+             * FreeStuff games get the same delayed
+             * "maybe I'll check this out" behavior
+             * as human game posts.
+             */
+            scheduleGame(
+                game,
+                client
             );
 
             return;
         }
 
-        const chunkSizeLimit = 2000;
+        /*
+         * Ignore all other bots.
+         */
+        if (message.author.bot) {
+            return;
+        }
 
-        for (
-            let i = 0;
-            i < responseMessage.length;
-            i += chunkSizeLimit
+        /*
+         * Ignore @everyone / @here.
+         */
+        if (
+            message.content.includes('@here') ||
+            message.content.includes('@everyone')
         ) {
-            const chunk =
-                responseMessage.substring(
-                    i,
-                    i + chunkSizeLimit
+            return;
+        }
+
+        /*
+         * Ambient game discovery.
+         *
+         * A human can simply drop a recognized
+         * store link into an allowed channel.
+         *
+         * Vesper does NOT need to be addressed.
+         */
+        const ambientAllowedChannel =
+            CHANNELS.includes(
+                message.channelId
+            );
+
+        if (ambientAllowedChannel) {
+            const gameUrl =
+                extractFirstUrl(
+                    message.content
                 );
 
-            if (i === 0) {
-                await message.reply(chunk);
-            } else {
-                await message.channel.send(
-                    chunk
-                );
+            if (
+                gameUrl &&
+                isGameUrl(gameUrl)
+            ) {
+                const gameTitle =
+                    extractGameTitleFromUrl(
+                        gameUrl
+                    );
+
+                if (gameTitle) {
+                    console.log(
+                        `[game-play] discovered game in chat: ${gameTitle}`
+                    );
+
+                    /*
+                     * Use Discord's generated Steam/store
+                     * preview as immediate context.
+                     */
+                    const embedContext =
+                        extractEmbedContext(
+                            message
+                        );
+
+                    /*
+                     * Social reaction happens immediately.
+                     *
+                     * Example:
+                     *
+                     * "Okay, trains and zombies?
+                     * Yeah, I'm checking this out."
+                     */
+                    await reactToGamePost(
+                        message,
+                        gameTitle,
+                        embedContext
+                    );
+
+                    /*
+                     * Then Vesper waits a little while
+                     * before actually "playing" it.
+                     */
+                    scheduleGame(
+                        {
+                            title:
+                                `Playing ${gameTitle}`,
+
+                            url:
+                                gameUrl,
+
+                            messageId:
+                                message.id,
+
+                            channelId:
+                                message.channelId,
+
+                            source:
+                                'channel-game-post',
+
+                            discoveredAt:
+                                Date.now(),
+                        },
+
+                        client
+                    );
+                }
             }
         }
-    } catch (error) {
-        console.error(
-            'Bot error:',
-            error
-        );
+
+        /*
+         * Ignore Discord replies during
+         * normal conversational handling.
+         */
+        if (
+            message.type ===
+            MessageType.Reply
+        ) {
+            return;
+        }
+
+        /*
+         * Must either be in an allowed channel
+         * OR directly mention Vesper.
+         */
+        const allowedChannel =
+            CHANNELS.includes(
+                message.channelId
+            );
+
+        const mentionedBot =
+            message.mentions.users.has(
+                client.user.id
+            );
+
+        if (
+            !allowedChannel &&
+            !mentionedBot
+        ) {
+            return;
+        }
+
+        /*
+         * Normal conversation still requires
+         * Vesper's name or direct mention.
+         */
+        const namedVesper =
+            /\bvesper\b/i.test(
+                message.content
+            );
+
+        if (
+            !namedVesper &&
+            !mentionedBot
+        ) {
+            return;
+        }
+
+        const cleanedContent =
+            message.content
+                .replace(
+                    /<@!?\d+>/g,
+                    ''
+                )
+                .replace(
+                    /\bvesper\b/gi,
+                    ''
+                )
+                .trim();
+
+        /*
+         * Manual debugging hook.
+         *
+         * This bypasses the discovery delay.
+         */
+        const testGameMatch =
+            cleanedContent.match(
+                /^testgame\s+(.+)$/i
+            );
+
+        if (testGameMatch) {
+            let title =
+                testGameMatch[1]
+                    .trim();
+
+            title =
+                title.replace(
+                    /^playing\s+/i,
+                    ''
+                );
+
+            const added =
+                enqueueGame({
+                    title:
+                        `Playing ${title}`,
+
+                    /*
+                     * Unique synthetic URL allows
+                     * repeated testing.
+                     */
+                    url:
+                        `test://${Date.now()}`,
+
+                    messageId:
+                        message.id,
+
+                    channelId:
+                        message.channelId,
+
+                    source:
+                        'manual-test',
+
+                    discoveredAt:
+                        Date.now(),
+                });
+
+            if (added) {
+                startNextGame(
+                    client
+                );
+
+                await message.reply(
+                    `queued **${title}**`
+                );
+            }
+
+            return;
+        }
+
+        await message.channel.sendTyping();
+
+        const sendTypingInterval =
+            setInterval(
+                () => {
+                    message.channel
+                        .sendTyping()
+                        .catch(
+                            () => {}
+                        );
+                },
+
+                5000
+            );
 
         try {
-            await message.reply(
-                'hmm... let me check to see if toby paid the bill.. try again in a sec..'
-            );
-        } catch (replyError) {
+            const conversation = [
+                {
+                    role:
+                        'system',
+
+                    content:
+                        'mmm hmmm im here..',
+                },
+            ];
+
+            const prevMessages =
+                await message
+                    .channel
+                    .messages
+                    .fetch({
+                        limit: 30,
+                    });
+
+            const orderedMessages =
+                [
+                    ...prevMessages
+                        .values(),
+                ].reverse();
+
+            for (
+                const msg
+                of orderedMessages
+            ) {
+                /*
+                 * Ignore other bots.
+                 */
+                if (
+                    msg.author.bot &&
+                    msg.author.id !==
+                        client.user.id
+                ) {
+                    continue;
+                }
+
+                /*
+                 * Human messages enter the
+                 * conversation only when Vesper
+                 * was named / mentioned.
+                 */
+                if (
+                    msg.author.id !==
+                    client.user.id
+                ) {
+                    const namedVesper =
+                        /\bvesper\b/i.test(
+                            msg.content
+                        );
+
+                    const mentionsVesper =
+                        msg.mentions.users.has(
+                            client.user.id
+                        );
+
+                    if (
+                        !namedVesper &&
+                        !mentionsVesper
+                    ) {
+                        continue;
+                    }
+                }
+
+                const username =
+                    msg.author.username
+                        .replace(
+                            /\s+/g,
+                            '_'
+                        )
+                        .replace(
+                            /[^\w]/g,
+                            ''
+                        );
+
+                if (
+                    msg.author.id ===
+                    client.user.id
+                ) {
+                    conversation.push({
+                        role:
+                            'assistant',
+
+                        name:
+                            username,
+
+                        content:
+                            msg.content,
+                    });
+                } else {
+                    conversation.push({
+                        role:
+                            'user',
+
+                        name:
+                            username,
+
+                        content:
+                            msg.content,
+                    });
+                }
+            }
+
+            const response =
+                await openai
+                    .chat
+                    .completions
+                    .create({
+                        model:
+                            'gpt-5.5',
+
+                        messages:
+                            conversation,
+                    });
+
+            const responseMessage =
+                response
+                    .choices?.[0]
+                    ?.message?.content;
+
+            if (
+                !responseMessage
+            ) {
+                await message.reply(
+                    'hmm... let me check to see if toby paid the bill.. try again in a sec..'
+                );
+
+                return;
+            }
+
+            const chunkSizeLimit =
+                2000;
+
+            for (
+                let i = 0;
+                i <
+                responseMessage.length;
+                i +=
+                chunkSizeLimit
+            ) {
+                const chunk =
+                    responseMessage
+                        .substring(
+                            i,
+                            i +
+                                chunkSizeLimit
+                        );
+
+                if (i === 0) {
+                    await message.reply(
+                        chunk
+                    );
+                } else {
+                    await message
+                        .channel
+                        .send(
+                            chunk
+                        );
+                }
+            }
+        } catch (error) {
             console.error(
-                'Could not send error message:',
+                'Bot error:',
+                error
+            );
+
+            try {
+                await message.reply(
+                    'hmm... let me check to see if toby paid the bill.. try again in a sec..'
+                );
+            } catch (
                 replyError
+            ) {
+                console.error(
+                    'Could not send error message:',
+                    replyError
+                );
+            }
+        } finally {
+            clearInterval(
+                sendTypingInterval
             );
         }
-    } finally {
-        clearInterval(
-            sendTypingInterval
-        );
     }
-});
+);
 
-client.login(process.env.TOKEN);
+client.login(
+    process.env.TOKEN
+);
