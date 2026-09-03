@@ -269,6 +269,8 @@ function isMediaUrl(url) {
             'media.tenor.com',
             'giphy.com',
             'media.giphy.com',
+            'klipy.com',
+            'media.klipy.com',
         ];
 
         if (
@@ -563,6 +565,9 @@ function messageHasGif(
             ) ||
             embedUrl.includes(
                 'giphy.com'
+            )||
+            embedUrl.includes(
+                'klipy.com'
             )
         ) {
             return true;
@@ -585,6 +590,9 @@ function messageHasGif(
         ) ||
         content.includes(
             'giphy.com'
+        ) ||
+        content.includes(
+            'klipy.com'
         )
     ) {
         return true;
