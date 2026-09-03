@@ -246,9 +246,6 @@ function isMediaUrl(url) {
             parsed.pathname
                 .toLowerCase();
 
-        /*
-         * Discord media.
-         */
         const discordMediaHosts = [
             'cdn.discordapp.com',
             'media.discordapp.net',
@@ -267,12 +264,6 @@ function isMediaUrl(url) {
             return true;
         }
 
-        /*
-         * Common GIF / image providers.
-         *
-         * These are MEDIA posts,
-         * not games.
-         */
         const mediaHosts = [
             'tenor.com',
             'media.tenor.com',
@@ -293,9 +284,6 @@ function isMediaUrl(url) {
             return true;
         }
 
-        /*
-         * Obvious media file extensions.
-         */
         return /\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(
             pathname
         );
@@ -321,11 +309,6 @@ function extractGameTitleFromUrl(
                     ''
                 );
 
-        /*
-         * Steam:
-         *
-         * /app/3517740/Frostrail/
-         */
         if (
             host ===
             'store.steampowered.com'
@@ -435,11 +418,6 @@ function isSupportedImageAttachment(
         return true;
     }
 
-    /*
-     * Discord does not always populate
-     * contentType, so fall back to the
-     * filename / URL extension.
-     */
     const filename =
         (
             attachment.name ||
@@ -462,11 +440,8 @@ function extractImageUrls(
         new Set();
 
     /*
-     * ------------------------------------------------
-     * NORMAL DISCORD ATTACHMENTS
-     * ------------------------------------------------
+     * Normal Discord attachments.
      */
-
     for (
         const attachment
         of message.attachments.values()
@@ -484,14 +459,8 @@ function extractImageUrls(
 
 
     /*
-     * ------------------------------------------------
-     * DISCORD EMBEDS
-     * ------------------------------------------------
-     *
-     * Handles pasted images, Tenor,
-     * Giphy, Discord previews, etc.
+     * Discord embeds.
      */
-
     for (
         const embed
         of message.embeds || []
@@ -504,11 +473,6 @@ function extractImageUrls(
             );
         }
 
-        /*
-         * GIF providers frequently use
-         * a gifv/video embed but give us
-         * a visual thumbnail.
-         */
         if (
             embed.thumbnail?.url &&
             (
@@ -527,12 +491,6 @@ function extractImageUrls(
         }
     }
 
-
-    /*
-     * Don't allow someone to stuff
-     * twenty images into one OpenAI
-     * request accidentally.
-     */
     return [
         ...urls,
     ].slice(
@@ -545,9 +503,8 @@ function extractImageUrls(
 function messageHasGif(
     message
 ) {
-
     /*
-     * Uploaded .gif attachment.
+     * Uploaded GIF.
      */
     for (
         const attachment
@@ -581,7 +538,7 @@ function messageHasGif(
 
 
     /*
-     * Discord GIF embeds.
+     * Discord embed GIF.
      */
     for (
         const embed
@@ -614,7 +571,7 @@ function messageHasGif(
 
 
     /*
-     * Raw Tenor / Giphy URLs.
+     * Raw GIF provider URL.
      */
     const content =
         (
@@ -637,6 +594,138 @@ function messageHasGif(
 }
 
 
+function messageHasMedia(
+    message
+) {
+    const imageUrls =
+        extractImageUrls(
+            message
+        );
+
+    if (
+        imageUrls.length > 0
+    ) {
+        return true;
+    }
+
+    if (
+        messageHasGif(
+            message
+        )
+    ) {
+        return true;
+    }
+
+    /*
+     * Also inspect direct content URL.
+     */
+    const contentUrl =
+        extractFirstUrl(
+            message.content
+        );
+
+    if (
+        contentUrl &&
+        isMediaUrl(
+            contentUrl
+        )
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+
+function debugMediaMessage(
+    message
+) {
+    console.log(
+        '[debug-media]',
+        JSON.stringify(
+            {
+                id:
+                    message.id,
+
+                content:
+                    message.content,
+
+                embeds:
+                    (
+                        message.embeds ||
+                        []
+                    ).map(
+                        (embed) => ({
+                            type:
+                                embed.type,
+
+                            url:
+                                embed.url,
+
+                            title:
+                                embed.title,
+
+                            image:
+                                embed.image?.url,
+
+                            thumbnail:
+                                embed.thumbnail?.url,
+
+                            video:
+                                embed.video?.url,
+
+                            provider:
+                                embed.provider,
+                        })
+                    ),
+
+                attachments:
+                    [
+                        ...message.attachments.values(),
+                    ].map(
+                        (attachment) => ({
+                            name:
+                                attachment.name,
+
+                            url:
+                                attachment.url,
+
+                            proxyURL:
+                                attachment.proxyURL,
+
+                            contentType:
+                                attachment.contentType,
+
+                            size:
+                                attachment.size,
+                        })
+                    ),
+
+                detected:
+                    {
+                        imageUrls:
+                            extractImageUrls(
+                                message
+                            ),
+
+                        hasGif:
+                            messageHasGif(
+                                message
+                            ),
+
+                        hasMedia:
+                            messageHasMedia(
+                                message
+                            ),
+                    },
+            },
+            null,
+            2
+        )
+    );
+}
+
+
 function buildUserContent(
     message
 ) {
@@ -649,10 +738,6 @@ function buildUserContent(
             message
         );
 
-    /*
-     * Preserve ordinary text-only
-     * messages as strings.
-     */
     if (
         imageUrls.length === 0
     ) {
@@ -675,7 +760,7 @@ function buildUserContent(
                 'text',
 
             text:
-                '[The user posted an image or GIF in Discord. React to the visual content naturally.]',
+                '[The user posted an image or GIF in Discord. React naturally to the visual content.]',
         });
     }
 
@@ -691,11 +776,6 @@ function buildUserContent(
                 url:
                     imageUrl,
 
-                /*
-                 * Low detail is plenty for
-                 * Discord reactions and saves
-                 * image-input tokens.
-                 */
                 detail:
                     'low',
             },
@@ -1100,19 +1180,39 @@ client.on(
 
         /*
          * ------------------------------------------------
-         * AMBIENT GAME DISCOVERY
+         * MEDIA DETECTION / DEBUG
          * ------------------------------------------------
-         *
-         * Human-posted URLs in allowed channels
-         * can be examined by Game Hunter.
          *
          * IMPORTANT:
          *
-         * Media URLs are explicitly excluded.
+         * We classify the WHOLE MESSAGE as media
+         * before Game Hunter gets to inspect URLs.
+         */
+
+        const messageIsMedia =
+            messageHasMedia(
+                message
+            );
+
+        /*
+         * Temporary debugging.
          *
-         * Vesper should LOOK at a GIF,
-         * not try to PLAY THE FUCKING GIF.
+         * Dump structure whenever Discord gives
+         * us anything that looks like media.
+         */
+        if (messageIsMedia) {
+            debugMediaMessage(
+                message
+            );
+        }
+
+
+        /*
          * ------------------------------------------------
+         * AMBIENT GAME DISCOVERY
+         * ------------------------------------------------
+         *
+         * Media messages NEVER enter this path.
          */
 
         const ambientAllowedChannel =
@@ -1120,7 +1220,10 @@ client.on(
                 message.channelId
             );
 
-        if (ambientAllowedChannel) {
+        if (
+            ambientAllowedChannel &&
+            !messageIsMedia
+        ) {
             const gameUrl =
                 extractFirstUrl(
                     message.content
@@ -1270,9 +1373,8 @@ client.on(
 
 
         /*
-         * If this isn't one of Vesper's
-         * channels, she still needs to be
-         * explicitly mentioned or replied to.
+         * Outside allowed channels,
+         * require explicit interaction.
          */
         if (
             !allowedChannel &&
@@ -1290,9 +1392,10 @@ client.on(
 
 
         /*
-         * In Vesper's allowed channels,
-         * bare images / GIFs are valid
-         * conversation triggers.
+         * In allowed channels:
+         *
+         * Bare image / GIF posts are valid
+         * Vesper conversation triggers.
          */
         if (
             !namedVesper &&
@@ -1300,7 +1403,7 @@ client.on(
             !replyingToVesper &&
             !(
                 allowedChannel &&
-                hasImage
+                messageIsMedia
             )
         ) {
             return;
@@ -1381,12 +1484,6 @@ client.on(
          * ------------------------------------------------
          * HUMAN-ISH GIF DELAY
          * ------------------------------------------------
-         *
-         * Don't have Vesper instantly react
-         * the millisecond a GIF appears.
-         *
-         * 4-8 seconds feels much more like
-         * someone actually noticed it.
          */
 
         if (hasGif) {
@@ -1431,20 +1528,16 @@ client.on(
 
         try {
 
-            /*
-             * Image posts get a more specific
-             * Vesper reaction prompt.
-             */
             const systemPrompt =
-                hasImage
+                messageIsMedia
                     ?
                         (
                             'You are Vesper, a casual, witty gaming AI hanging out with people in Discord. ' +
                             'Someone has just posted an image or GIF. ' +
                             'Look at the supplied visual content and react to what you actually see. ' +
-                            'Respond like another person in the channel noticing the image, not like an image-analysis service. ' +
+                            'Respond like another person in the channel noticing it, not like an image-analysis service. ' +
                             'Be playful, dry, amused, sarcastic, or curious when appropriate. ' +
-                            'Do not mechanically describe every object in the image. ' +
+                            'Do not mechanically describe every object. ' +
                             'Do not say "the image shows", "I can see", "as an AI", "based on the image", or mention computer vision. ' +
                             'Do not invent details that are not visually supported. ' +
                             'If the visual is ambiguous, keep the reaction general rather than pretending you know more than you do. ' +
@@ -1473,6 +1566,7 @@ client.on(
                         limit: 30,
                     });
 
+
             const orderedMessages =
                 [
                     ...prevMessages.values(),
@@ -1484,12 +1578,6 @@ client.on(
                 of orderedMessages
             ) {
 
-                /*
-                 * Ignore other bots.
-                 *
-                 * Keep Vesper's own messages
-                 * for conversational context.
-                 */
                 if (
                     msg.author.bot &&
                     msg.author.id !==
@@ -1518,12 +1606,6 @@ client.on(
                             message.id;
 
 
-                    /*
-                     * The current trigger message
-                     * MUST be kept even if it has
-                     * no text and only contains
-                     * an image/GIF.
-                     */
                     if (
                         !msgNamedVesper &&
                         !mentionsVesper &&
