@@ -78,7 +78,7 @@ function randomBetween(
 
 /*
  * -------------------------------------------------------
- * URL / GAME PARSING
+ * URL HELPERS
  * -------------------------------------------------------
  */
 
@@ -102,6 +102,232 @@ function extractFirstUrl(content) {
     );
 }
 
+
+function normalizeHost(url) {
+    try {
+        return new URL(url)
+            .hostname
+            .toLowerCase()
+            .replace(
+                /^www\./,
+                ''
+            );
+
+    } catch {
+        return null;
+    }
+}
+
+
+function hostMatches(
+    host,
+    domains
+) {
+    if (!host) {
+        return false;
+    }
+
+    return domains.some(
+        (domain) =>
+            host === domain ||
+            host.endsWith(
+                `.${domain}`
+            )
+    );
+}
+
+
+/*
+ * -------------------------------------------------------
+ * URL CLASSIFICATION
+ * -------------------------------------------------------
+ */
+
+function classifyUrl(url) {
+    if (!url) {
+        return {
+            type:
+                'none',
+
+            url:
+                null,
+        };
+    }
+
+    let parsed;
+
+    try {
+        parsed =
+            new URL(url);
+
+    } catch {
+        return {
+            type:
+                'invalid',
+
+            url,
+        };
+    }
+
+    const host =
+        parsed.hostname
+            .toLowerCase()
+            .replace(
+                /^www\./,
+                ''
+            );
+
+    const pathname =
+        parsed.pathname
+            .toLowerCase();
+
+
+    /*
+     * ------------------------------------------------
+     * KNOWN GAME SOURCES
+     * ------------------------------------------------
+     */
+
+    const gameHosts = [
+        'store.steampowered.com',
+        'store.epicgames.com',
+        'gog.com',
+        'itch.io',
+        'humblebundle.com',
+    ];
+
+    if (
+        hostMatches(
+            host,
+            gameHosts
+        )
+    ) {
+        return {
+            type:
+                'game',
+
+            url,
+
+            host,
+        };
+    }
+
+
+    /*
+     * ------------------------------------------------
+     * MEDIA SOURCES
+     * ------------------------------------------------
+     */
+
+    const mediaHosts = [
+        'cdn.discordapp.com',
+        'media.discordapp.net',
+
+        'tenor.com',
+        'media.tenor.com',
+
+        'giphy.com',
+        'media.giphy.com',
+
+        'klipy.com',
+        'media.klipy.com',
+    ];
+
+    if (
+        hostMatches(
+            host,
+            mediaHosts
+        )
+    ) {
+        return {
+            type:
+                'media',
+
+            url,
+
+            host,
+        };
+    }
+
+
+    /*
+     * ------------------------------------------------
+     * VIDEO SOURCES
+     * ------------------------------------------------
+     */
+
+    const videoHosts = [
+        'youtube.com',
+        'youtu.be',
+        'twitch.tv',
+        'vimeo.com',
+    ];
+
+    if (
+        hostMatches(
+            host,
+            videoHosts
+        )
+    ) {
+        return {
+            type:
+                'video',
+
+            url,
+
+            host,
+        };
+    }
+
+
+    /*
+     * ------------------------------------------------
+     * DIRECT MEDIA FILE
+     * ------------------------------------------------
+     */
+
+    if (
+        /\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(
+            pathname
+        )
+    ) {
+        return {
+            type:
+                'media',
+
+            url,
+
+            host,
+        };
+    }
+
+
+    /*
+     * ------------------------------------------------
+     * EVERYTHING ELSE
+     * ------------------------------------------------
+     *
+     * Tomorrow Game Hunter can inspect these
+     * and determine whether they are obscure
+     * game pages.
+     */
+
+    return {
+        type:
+            'web',
+
+        url,
+
+        host,
+    };
+}
+
+
+/*
+ * -------------------------------------------------------
+ * COMPONENT / GAME TITLE PARSING
+ * -------------------------------------------------------
+ */
 
 function extractComponentText(
     components
@@ -147,7 +373,8 @@ function extractGameTitle(
     content,
     url
 ) {
-    let text = content;
+    let text =
+        content || '';
 
     if (url) {
         text =
@@ -185,117 +412,6 @@ function extractGameTitle(
 }
 
 
-function isGameUrl(url) {
-    if (!url) {
-        return false;
-    }
-
-    try {
-        const parsed =
-            new URL(url);
-
-        const host =
-            parsed.hostname
-                .toLowerCase()
-                .replace(
-                    /^www\./,
-                    ''
-                );
-
-        const gameHosts = [
-            'store.steampowered.com',
-            'store.epicgames.com',
-            'gog.com',
-            'itch.io',
-            'humblebundle.com',
-        ];
-
-        return gameHosts.some(
-            (gameHost) =>
-                host ===
-                    gameHost ||
-                host.endsWith(
-                    `.${gameHost}`
-                )
-        );
-
-    } catch {
-        return false;
-    }
-}
-
-
-function isMediaUrl(url) {
-    if (!url) {
-        return false;
-    }
-
-    try {
-        const parsed =
-            new URL(url);
-
-        const host =
-            parsed.hostname
-                .toLowerCase()
-                .replace(
-                    /^www\./,
-                    ''
-                );
-
-        const pathname =
-            parsed.pathname
-                .toLowerCase();
-
-        const discordMediaHosts = [
-            'cdn.discordapp.com',
-            'media.discordapp.net',
-        ];
-
-        if (
-            discordMediaHosts.some(
-                (mediaHost) =>
-                    host ===
-                        mediaHost ||
-                    host.endsWith(
-                        `.${mediaHost}`
-                    )
-            )
-        ) {
-            return true;
-        }
-
-        const mediaHosts = [
-            'tenor.com',
-            'media.tenor.com',
-            'giphy.com',
-            'media.giphy.com',
-            'klipy.com',
-            'media.klipy.com',
-        ];
-
-        if (
-            mediaHosts.some(
-                (mediaHost) =>
-                    host ===
-                        mediaHost ||
-                    host.endsWith(
-                        `.${mediaHost}`
-                    )
-            )
-        ) {
-            return true;
-        }
-
-        return /\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(
-            pathname
-        );
-
-    } catch {
-        return false;
-    }
-}
-
-
 function extractGameTitleFromUrl(
     url
 ) {
@@ -311,6 +427,12 @@ function extractGameTitleFromUrl(
                     ''
                 );
 
+
+        /*
+         * Steam:
+         *
+         * /app/3517740/Frostrail/
+         */
         if (
             host ===
             'store.steampowered.com'
@@ -341,6 +463,7 @@ function extractGameTitleFromUrl(
                     .trim();
             }
         }
+
 
         const parts =
             parsed.pathname
@@ -382,6 +505,9 @@ function extractEmbedContext(
         message.embeds[0];
 
     return {
+        type:
+            embed.type || null,
+
         title:
             embed.title || null,
 
@@ -390,6 +516,18 @@ function extractEmbedContext(
 
         url:
             embed.url || null,
+
+        provider:
+            embed.provider || null,
+
+        image:
+            embed.image?.url || null,
+
+        thumbnail:
+            embed.thumbnail?.url || null,
+
+        video:
+            embed.video?.url || null,
 
         fields:
             embed.fields || [],
@@ -441,8 +579,9 @@ function extractImageUrls(
     const urls =
         new Set();
 
+
     /*
-     * Normal Discord attachments.
+     * Uploaded images / GIFs.
      */
     for (
         const attachment
@@ -461,7 +600,7 @@ function extractImageUrls(
 
 
     /*
-     * Discord embeds.
+     * Discord image / GIF embeds.
      */
     for (
         const embed
@@ -475,6 +614,11 @@ function extractImageUrls(
             );
         }
 
+        const embedClassification =
+            classifyUrl(
+                embed.url
+            );
+
         if (
             embed.thumbnail?.url &&
             (
@@ -482,9 +626,8 @@ function extractImageUrls(
                     'gifv' ||
                 embed.type ===
                     'image' ||
-                isMediaUrl(
-                    embed.url
-                )
+                embedClassification.type ===
+                    'media'
             )
         ) {
             urls.add(
@@ -492,6 +635,7 @@ function extractImageUrls(
             );
         }
     }
+
 
     return [
         ...urls,
@@ -505,6 +649,7 @@ function extractImageUrls(
 function messageHasGif(
     message
 ) {
+
     /*
      * Uploaded GIF.
      */
@@ -540,7 +685,7 @@ function messageHasGif(
 
 
     /*
-     * Discord embed GIF.
+     * Embed GIF.
      */
     for (
         const embed
@@ -553,21 +698,24 @@ function messageHasGif(
             return true;
         }
 
-        const embedUrl =
-            (
-                embed.url ||
-                ''
-            ).toLowerCase();
+        const classification =
+            classifyUrl(
+                embed.url
+            );
 
         if (
-            embedUrl.includes(
-                'tenor.com'
-            ) ||
-            embedUrl.includes(
-                'giphy.com'
-            )||
-            embedUrl.includes(
-                'klipy.com'
+            classification.type ===
+                'media' &&
+            (
+                classification.host?.includes(
+                    'tenor'
+                ) ||
+                classification.host?.includes(
+                    'giphy'
+                ) ||
+                classification.host?.includes(
+                    'klipy'
+                )
             )
         ) {
             return true;
@@ -576,23 +724,36 @@ function messageHasGif(
 
 
     /*
-     * Raw GIF provider URL.
+     * Raw URL in Discord message.
      */
-    const content =
-        (
-            message.content ||
-            ''
-        ).toLowerCase();
+    const contentUrl =
+        extractFirstUrl(
+            message.content
+        );
+
+    const classification =
+        classifyUrl(
+            contentUrl
+        );
 
     if (
-        content.includes(
-            'tenor.com'
-        ) ||
-        content.includes(
-            'giphy.com'
-        ) ||
-        content.includes(
-            'klipy.com'
+        classification.type ===
+            'media' &&
+        (
+            classification.host?.includes(
+                'tenor'
+            ) ||
+            classification.host?.includes(
+                'giphy'
+            ) ||
+            classification.host?.includes(
+                'klipy'
+            ) ||
+            contentUrl
+                ?.toLowerCase()
+                .includes(
+                    '.gif'
+                )
         )
     ) {
         return true;
@@ -605,13 +766,10 @@ function messageHasGif(
 function messageHasMedia(
     message
 ) {
-    const imageUrls =
+    if (
         extractImageUrls(
             message
-        );
-
-    if (
-        imageUrls.length > 0
+        ).length > 0
     ) {
         return true;
     }
@@ -624,39 +782,76 @@ function messageHasMedia(
         return true;
     }
 
+
     /*
-     * Also inspect direct content URL.
+     * Direct media URL.
      */
     const contentUrl =
         extractFirstUrl(
             message.content
         );
 
-    if (
-        contentUrl &&
-        isMediaUrl(
+    const classification =
+        classifyUrl(
             contentUrl
-        )
-    ) {
-        return true;
-    }
+        );
 
-    return false;
+    return (
+        classification.type ===
+        'media'
+    );
 }
 
 
-function debugMediaMessage(
-    message
+/*
+ * -------------------------------------------------------
+ * DEBUGGING
+ * -------------------------------------------------------
+ */
+
+function debugMessageRouting(
+    message,
+    route
 ) {
+    const url =
+        extractFirstUrl(
+            message.content
+        );
+
     console.log(
-        '[debug-media]',
+        '[router]',
         JSON.stringify(
             {
-                id:
+                messageId:
                     message.id,
+
+                route,
 
                 content:
                     message.content,
+
+                url,
+
+                urlClassification:
+                    classifyUrl(
+                        url
+                    ),
+
+                attachments:
+                    [
+                        ...message.attachments.values(),
+                    ].map(
+                        (attachment) => ({
+                            name:
+                                attachment.name,
+
+                            contentType:
+                                attachment.contentType,
+
+                            url:
+                                attachment.url,
+                        })
+                    ),
 
                 embeds:
                     (
@@ -673,6 +868,9 @@ function debugMediaMessage(
                             title:
                                 embed.title,
 
+                            provider:
+                                embed.provider,
+
                             image:
                                 embed.image?.url,
 
@@ -681,51 +879,8 @@ function debugMediaMessage(
 
                             video:
                                 embed.video?.url,
-
-                            provider:
-                                embed.provider,
                         })
                     ),
-
-                attachments:
-                    [
-                        ...message.attachments.values(),
-                    ].map(
-                        (attachment) => ({
-                            name:
-                                attachment.name,
-
-                            url:
-                                attachment.url,
-
-                            proxyURL:
-                                attachment.proxyURL,
-
-                            contentType:
-                                attachment.contentType,
-
-                            size:
-                                attachment.size,
-                        })
-                    ),
-
-                detected:
-                    {
-                        imageUrls:
-                            extractImageUrls(
-                                message
-                            ),
-
-                        hasGif:
-                            messageHasGif(
-                                message
-                            ),
-
-                        hasMedia:
-                            messageHasMedia(
-                                message
-                            ),
-                    },
             },
             null,
             2
@@ -733,6 +888,12 @@ function debugMediaMessage(
     );
 }
 
+
+/*
+ * -------------------------------------------------------
+ * OPENAI USER CONTENT
+ * -------------------------------------------------------
+ */
 
 function buildUserContent(
     message
@@ -746,13 +907,19 @@ function buildUserContent(
             message
         );
 
+
+    /*
+     * Ordinary text / URL message.
+     */
     if (
         imageUrls.length === 0
     ) {
         return text;
     }
 
+
     const content = [];
+
 
     if (text) {
         content.push({
@@ -772,6 +939,7 @@ function buildUserContent(
         });
     }
 
+
     for (
         const imageUrl
         of imageUrls
@@ -790,9 +958,16 @@ function buildUserContent(
         });
     }
 
+
     return content;
 }
 
+
+/*
+ * -------------------------------------------------------
+ * REPLY DETECTION
+ * -------------------------------------------------------
+ */
 
 async function isReplyToVesper(
     message
@@ -819,7 +994,7 @@ async function isReplyToVesper(
 
     } catch (error) {
         console.error(
-            '[vision] Could not fetch replied message:',
+            '[reply] Could not fetch replied message:',
             error.message
         );
 
@@ -858,6 +1033,7 @@ function runGameHunter(game) {
             let stdout = '';
             let stderr = '';
 
+
             hunter.stdout.on(
                 'data',
                 (data) => {
@@ -866,6 +1042,7 @@ function runGameHunter(game) {
                 }
             );
 
+
             hunter.stderr.on(
                 'data',
                 (data) => {
@@ -873,6 +1050,7 @@ function runGameHunter(game) {
                         data.toString();
                 }
             );
+
 
             hunter.on(
                 'error',
@@ -891,6 +1069,7 @@ function runGameHunter(game) {
                     });
                 }
             );
+
 
             hunter.on(
                 'close',
@@ -915,13 +1094,10 @@ function runGameHunter(game) {
                     }
 
                     try {
-                        const result =
+                        resolve(
                             JSON.parse(
                                 stdout.trim()
-                            );
-
-                        resolve(
-                            result
+                            )
                         );
 
                     } catch (error) {
@@ -998,14 +1174,17 @@ async function reactToGamePost(
                     ],
                 });
 
+
         const reaction =
             response
                 .choices?.[0]
                 ?.message?.content;
 
+
         if (!reaction) {
             return;
         }
+
 
         await message
             .channel
@@ -1022,33 +1201,117 @@ async function reactToGamePost(
 }
 
 
-async function handleBlockedGame(
+/*
+ * -------------------------------------------------------
+ * KNOWN GAME URL HANDLER
+ * -------------------------------------------------------
+ */
+
+async function handleKnownGameUrl(
     message,
-    gameTitle
+    gameUrl
 ) {
-    const responses = [
-        `apparently Toby doesn't want me to have nice things. I can't look up **${gameTitle}** from there.`,
-
-        `well that's rude. **${gameTitle}** is on a site Toby hasn't approved for me.`,
-
-        `I'd check out **${gameTitle}**, but apparently I'm on supervised internet privileges.`,
-
-        `Toby says that website is forbidden. Something something responsible AI parenting.`,
-    ];
-
-    const response =
-        responses[
-            Math.floor(
-                Math.random() *
-                responses.length
-            )
-        ];
-
-    await message
-        .channel
-        .send(
-            `${message.author} ${response}`
+    const knownGameTitle =
+        extractGameTitleFromUrl(
+            gameUrl
         );
+
+    const embedContext =
+        extractEmbedContext(
+            message
+        );
+
+    const gameTitle =
+        knownGameTitle ||
+        embedContext?.title ||
+        'that game';
+
+
+    console.log(
+        `[game-play] known game URL discovered: ${gameTitle}`
+    );
+
+
+    const hunterResult =
+        await runGameHunter({
+            title:
+                gameTitle,
+
+            url:
+                gameUrl,
+        });
+
+
+    if (
+        hunterResult.status ===
+        'error'
+    ) {
+        console.error(
+            '[game-hunter] lookup failed:',
+            hunterResult.error
+        );
+
+        return false;
+    }
+
+
+    if (
+        hunterResult.status ===
+        'blocked_source'
+    ) {
+        console.log(
+            `[game-play] unexpectedly blocked known source: ${gameUrl}`
+        );
+
+        return false;
+    }
+
+
+    if (
+        hunterResult.status !==
+        'ok'
+    ) {
+        return false;
+    }
+
+
+    console.log(
+        `[game-play] approved game source: ${gameUrl}`
+    );
+
+
+    await reactToGamePost(
+        message,
+        gameTitle,
+        embedContext
+    );
+
+
+    scheduleGame(
+        {
+            title:
+                `Playing ${gameTitle}`,
+
+            url:
+                gameUrl,
+
+            messageId:
+                message.id,
+
+            channelId:
+                message.channelId,
+
+            source:
+                'channel-game-post',
+
+            discoveredAt:
+                Date.now(),
+        },
+        client
+    );
+
+
+    return true;
 }
 
 
@@ -1098,6 +1361,7 @@ client.on(
                 message.content ||
                 componentText;
 
+
             if (!sourceText) {
                 console.log(
                     '[game-play] FreeStuff message had no readable text'
@@ -1106,10 +1370,12 @@ client.on(
                 return;
             }
 
+
             const url =
                 extractFirstUrl(
                     sourceText
                 );
+
 
             if (!url) {
                 console.log(
@@ -1119,11 +1385,13 @@ client.on(
                 return;
             }
 
+
             const title =
                 extractGameTitle(
                     sourceText,
                     url
                 );
+
 
             if (!title) {
                 console.log(
@@ -1133,9 +1401,11 @@ client.on(
                 return;
             }
 
+
             console.log(
                 `[game-play] FreeStuff discovered: ${title}`
             );
+
 
             scheduleGame(
                 {
@@ -1164,7 +1434,7 @@ client.on(
 
 
         /*
-         * Ignore all other bots.
+         * Ignore other bots.
          */
         if (message.author.bot) {
             return;
@@ -1172,7 +1442,7 @@ client.on(
 
 
         /*
-         * Ignore broadcast messages.
+         * Ignore broadcasts.
          */
         if (
             message.content.includes(
@@ -1186,162 +1456,95 @@ client.on(
         }
 
 
+        const allowedChannel =
+            CHANNELS.includes(
+                message.channelId
+            );
+
+
         /*
          * ------------------------------------------------
-         * MEDIA DETECTION / DEBUG
+         * ROUTE MESSAGE
          * ------------------------------------------------
-         *
-         * IMPORTANT:
-         *
-         * We classify the WHOLE MESSAGE as media
-         * before Game Hunter gets to inspect URLs.
          */
+
+        const postedUrl =
+            extractFirstUrl(
+                message.content
+            );
+
+        const urlClassification =
+            classifyUrl(
+                postedUrl
+            );
 
         const messageIsMedia =
             messageHasMedia(
                 message
             );
 
+
         /*
-         * Temporary debugging.
+         * MEDIA ALWAYS WINS.
          *
-         * Dump structure whenever Discord gives
-         * us anything that looks like media.
+         * This prevents GIF providers from
+         * accidentally entering Game Hunter.
          */
         if (messageIsMedia) {
-            debugMediaMessage(
-                message
+            debugMessageRouting(
+                message,
+                'media'
             );
         }
 
 
         /*
          * ------------------------------------------------
-         * AMBIENT GAME DISCOVERY
+         * KNOWN GAME URL
          * ------------------------------------------------
          *
-         * Media messages NEVER enter this path.
+         * Only positively identified game
+         * domains enter Game Hunter tonight.
+         *
+         * Tomorrow:
+         *
+         * web / unknown URLs can be probed by
+         * game-hunter.py before deciding whether
+         * they belong here.
          */
 
-        const ambientAllowedChannel =
-            CHANNELS.includes(
-                message.channelId
+        if (
+            allowedChannel &&
+            !messageIsMedia &&
+            urlClassification.type ===
+                'game'
+        ) {
+            debugMessageRouting(
+                message,
+                'known-game'
             );
 
+            await handleKnownGameUrl(
+                message,
+                postedUrl
+            );
+
+            return;
+        }
+
+
+        /*
+         * Useful temporary routing debug for
+         * things like YouTube / random websites.
+         */
         if (
-            ambientAllowedChannel &&
+            postedUrl &&
             !messageIsMedia
         ) {
-            const gameUrl =
-                extractFirstUrl(
-                    message.content
-                );
-
-            if (
-                gameUrl &&
-                !isMediaUrl(
-                    gameUrl
-                )
-            ) {
-                const knownGameUrl =
-                    isGameUrl(
-                        gameUrl
-                    );
-
-                const knownGameTitle =
-                    knownGameUrl
-                        ? extractGameTitleFromUrl(
-                            gameUrl
-                        )
-                        : null;
-
-                const embedContext =
-                    extractEmbedContext(
-                        message
-                    );
-
-                const gameTitle =
-                    knownGameTitle ||
-                    embedContext?.title ||
-                    'that game';
-
-                const hunterResult =
-                    await runGameHunter({
-                        title:
-                            gameTitle,
-
-                        url:
-                            gameUrl,
-                    });
-
-                if (
-                    hunterResult.status ===
-                    'blocked_source'
-                ) {
-                    console.log(
-                        `[game-play] blocked source: ${gameUrl}`
-                    );
-
-                    await handleBlockedGame(
-                        message,
-                        gameTitle
-                    );
-
-                    return;
-                }
-
-                if (
-                    hunterResult.status ===
-                    'error'
-                ) {
-                    console.error(
-                        '[game-hunter] lookup failed:',
-                        hunterResult.error
-                    );
-                }
-
-                if (
-                    hunterResult.status ===
-                    'ok'
-                ) {
-                    console.log(
-                        `[game-play] approved game source: ${gameUrl}`
-                    );
-
-                    console.log(
-                        `[game-play] discovered game in chat: ${gameTitle}`
-                    );
-
-                    await reactToGamePost(
-                        message,
-                        gameTitle,
-                        embedContext
-                    );
-
-                    scheduleGame(
-                        {
-                            title:
-                                `Playing ${gameTitle}`,
-
-                            url:
-                                gameUrl,
-
-                            messageId:
-                                message.id,
-
-                            channelId:
-                                message.channelId,
-
-                            source:
-                                'channel-game-post',
-
-                            discoveredAt:
-                                Date.now(),
-                        },
-                        client
-                    );
-                }
-            }
+            debugMessageRouting(
+                message,
+                urlClassification.type
+            );
         }
 
 
@@ -1351,39 +1554,18 @@ client.on(
          * ------------------------------------------------
          */
 
-        const allowedChannel =
-            CHANNELS.includes(
-                message.channelId
-            );
-
         const mentionedBot =
             message.mentions.users.has(
                 client.user.id
             );
+
 
         const replyingToVesper =
             await isReplyToVesper(
                 message
             );
 
-        const imageUrls =
-            extractImageUrls(
-                message
-            );
 
-        const hasImage =
-            imageUrls.length > 0;
-
-        const hasGif =
-            messageHasGif(
-                message
-            );
-
-
-        /*
-         * Outside allowed channels,
-         * require explicit interaction.
-         */
         if (
             !allowedChannel &&
             !mentionedBot &&
@@ -1400,10 +1582,10 @@ client.on(
 
 
         /*
-         * In allowed channels:
+         * Bare media in an allowed channel
+         * triggers Vesper automatically.
          *
-         * Bare image / GIF posts are valid
-         * Vesper conversation triggers.
+         * Bare YouTube/web URLs do NOT.
          */
         if (
             !namedVesper &&
@@ -1442,16 +1624,19 @@ client.on(
                 /^testgame\s+(.+)$/i
             );
 
+
         if (testGameMatch) {
             let title =
                 testGameMatch[1]
                     .trim();
+
 
             title =
                 title.replace(
                     /^playing\s+/i,
                     ''
                 );
+
 
             const added =
                 enqueueGame({
@@ -1474,6 +1659,7 @@ client.on(
                         Date.now(),
                 });
 
+
             if (added) {
                 startNextGame(
                     client
@@ -1484,15 +1670,22 @@ client.on(
                 );
             }
 
+
             return;
         }
 
 
         /*
          * ------------------------------------------------
-         * HUMAN-ISH GIF DELAY
+         * GIF DELAY
          * ------------------------------------------------
          */
+
+        const hasGif =
+            messageHasGif(
+                message
+            );
+
 
         if (hasGif) {
             const delay =
@@ -1501,9 +1694,11 @@ client.on(
                     8000
                 );
 
+
             console.log(
                 `[vision] GIF detected; reacting in ${delay}ms`
             );
+
 
             await sleep(
                 delay
@@ -1513,13 +1708,14 @@ client.on(
 
         /*
          * ------------------------------------------------
-         * NORMAL OPENAI CHAT
+         * OPENAI CHAT
          * ------------------------------------------------
          */
 
         await message
             .channel
             .sendTyping();
+
 
         const sendTypingInterval =
             setInterval(
@@ -1534,22 +1730,29 @@ client.on(
                 5000
             );
 
+
         try {
+
+            /*
+             * ------------------------------------------------
+             * SYSTEM PROMPT
+             * ------------------------------------------------
+             */
 
             const systemPrompt =
                 messageIsMedia
                     ?
                         (
                             'You are Vesper, a casual, witty gaming AI hanging out with people in Discord. ' +
-                            'Someone has just posted an image or GIF. ' +
-                            'Look at the supplied visual content and react to what you actually see. ' +
-                            'Respond like another person in the channel noticing it, not like an image-analysis service. ' +
-                            'Be playful, dry, amused, sarcastic, or curious when appropriate. ' +
-                            'Do not mechanically describe every object. ' +
-                            'Do not say "the image shows", "I can see", "as an AI", "based on the image", or mention computer vision. ' +
+                            'Someone has posted an image or GIF. ' +
+                            'React naturally to what is visually present. ' +
+                            'Respond like another person hanging out in the channel, not like an image-analysis service. ' +
+                            'Be playful, dry, amused, sarcastic, curious, or teasing when appropriate. ' +
+                            'Do not mechanically describe the entire image. ' +
+                            'Do not say "the image shows", "I can see", "based on the image", "as an AI", or mention computer vision. ' +
                             'Do not invent details that are not visually supported. ' +
-                            'If the visual is ambiguous, keep the reaction general rather than pretending you know more than you do. ' +
-                            'Keep it conversational and usually one or two short sentences.'
+                            'If the visual is ambiguous, make a general reaction instead of pretending certainty. ' +
+                            'Keep the response conversational and usually one or two short sentences.'
                         )
                     :
                         'mmm hmmm im here..';
@@ -1565,6 +1768,12 @@ client.on(
                 },
             ];
 
+
+            /*
+             * ------------------------------------------------
+             * CONVERSATION HISTORY
+             * ------------------------------------------------
+             */
 
             const prevMessages =
                 await message
@@ -1586,6 +1795,9 @@ client.on(
                 of orderedMessages
             ) {
 
+                /*
+                 * Ignore other bots.
+                 */
                 if (
                     msg.author.bot &&
                     msg.author.id !==
@@ -1595,6 +1807,15 @@ client.on(
                 }
 
 
+                /*
+                 * Human messages are normally only
+                 * included when explicitly addressed
+                 * to Vesper.
+                 *
+                 * Always include the current message,
+                 * because an image-only post has no
+                 * "Vesper" text.
+                 */
                 if (
                     msg.author.id !==
                     client.user.id
@@ -1604,10 +1825,12 @@ client.on(
                             msg.content
                         );
 
+
                     const mentionsVesper =
                         msg.mentions.users.has(
                             client.user.id
                         );
+
 
                     const currentMessage =
                         msg.id ===
@@ -1668,6 +1891,12 @@ client.on(
             }
 
 
+            /*
+             * ------------------------------------------------
+             * GENERATE
+             * ------------------------------------------------
+             */
+
             const response =
                 await openai
                     .chat
@@ -1696,6 +1925,12 @@ client.on(
             }
 
 
+            /*
+             * ------------------------------------------------
+             * DISCORD MESSAGE CHUNKING
+             * ------------------------------------------------
+             */
+
             const chunkSizeLimit =
                 2000;
 
@@ -1713,6 +1948,7 @@ client.on(
                         i +
                             chunkSizeLimit
                     );
+
 
                 if (i === 0) {
                     await message.reply(
@@ -1733,6 +1969,7 @@ client.on(
                 'Bot error:',
                 error
             );
+
 
             try {
                 await message.reply(
