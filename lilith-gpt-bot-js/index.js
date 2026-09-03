@@ -294,6 +294,227 @@ function extractEmbedContext(
 
 /*
  * -------------------------------------------------------
+ * IMAGE / GIF PARSING
+ * -------------------------------------------------------
+ */
+
+function isSupportedImageAttachment(
+    attachment
+) {
+    const contentType =
+        (
+            attachment.contentType ||
+            ''
+        ).toLowerCase();
+
+    if (
+        contentType.startsWith(
+            'image/'
+        )
+    ) {
+        return true;
+    }
+
+    /*
+     * Discord does not always populate
+     * contentType, so fall back to the
+     * attachment filename / URL.
+     */
+    const filename =
+        (
+            attachment.name ||
+            attachment.url ||
+            ''
+        )
+            .split('?')[0]
+            .toLowerCase();
+
+    return /\.(png|jpe?g|gif|webp)$/.test(
+        filename
+    );
+}
+
+
+function extractImageUrls(
+    message
+) {
+    const urls =
+        new Set();
+
+    /*
+     * Normal Discord attachments.
+     */
+    for (
+        const attachment
+        of message.attachments.values()
+    ) {
+        if (
+            isSupportedImageAttachment(
+                attachment
+            )
+        ) {
+            urls.add(
+                attachment.url
+            );
+        }
+    }
+
+    /*
+     * Discord embeds.
+     *
+     * This catches pasted image links,
+     * GIF embeds, Tenor thumbnails, etc.
+     */
+    for (
+        const embed
+        of message.embeds || []
+    ) {
+        if (
+            embed.image?.url
+        ) {
+            urls.add(
+                embed.image.url
+            );
+        }
+
+        /*
+         * GIF providers such as Tenor
+         * commonly expose an MP4 video
+         * with a thumbnail.
+         *
+         * We can't send the MP4 as an
+         * image input here, so use the
+         * visual thumbnail.
+         */
+        if (
+            (
+                embed.type ===
+                    'gifv' ||
+                embed.type ===
+                    'image'
+            ) &&
+            embed.thumbnail?.url
+        ) {
+            urls.add(
+                embed.thumbnail.url
+            );
+        }
+    }
+
+    /*
+     * Prevent someone from dumping a
+     * giant image batch into one model
+     * request.
+     */
+    return [
+        ...urls,
+    ].slice(
+        0,
+        4
+    );
+}
+
+
+function buildUserContent(
+    message
+) {
+    const text =
+        message.content
+            ?.trim() || '';
+
+    const imageUrls =
+        extractImageUrls(
+            message
+        );
+
+    /*
+     * Preserve normal text-only messages
+     * as simple strings.
+     */
+    if (
+        imageUrls.length === 0
+    ) {
+        return text;
+    }
+
+    const content = [];
+
+    if (text) {
+        content.push({
+            type:
+                'text',
+
+            text,
+        });
+
+    } else {
+        content.push({
+            type:
+                'text',
+
+            text:
+                '[User sent an image or GIF.]',
+        });
+    }
+
+    for (
+        const imageUrl
+        of imageUrls
+    ) {
+        content.push({
+            type:
+                'image_url',
+
+            image_url: {
+                url:
+                    imageUrl,
+
+                detail:
+                    'low',
+            },
+        });
+    }
+
+    return content;
+}
+
+
+async function isReplyToVesper(
+    message
+) {
+    if (
+        message.type !==
+            MessageType.Reply ||
+        !message.reference
+            ?.messageId
+    ) {
+        return false;
+    }
+
+    try {
+        const repliedMessage =
+            await message
+                .fetchReference();
+
+        return (
+            repliedMessage
+                .author?.id ===
+            client.user.id
+        );
+
+    } catch (error) {
+        console.error(
+            '[vision] Could not fetch replied message:',
+            error.message
+        );
+
+        return false;
+    }
+}
+
+
+/*
+ * -------------------------------------------------------
  * GAME HUNTER
  * -------------------------------------------------------
  */
@@ -781,13 +1002,6 @@ client.on(
          * ------------------------------------------------
          */
 
-        if (
-            message.type ===
-            MessageType.Reply
-        ) {
-            return;
-        }
-
         const allowedChannel =
             CHANNELS.includes(
                 message.channelId
@@ -798,9 +1012,15 @@ client.on(
                 client.user.id
             );
 
+        const replyingToVesper =
+            await isReplyToVesper(
+                message
+            );
+
         if (
             !allowedChannel &&
-            !mentionedBot
+            !mentionedBot &&
+            !replyingToVesper
         ) {
             return;
         }
@@ -812,7 +1032,8 @@ client.on(
 
         if (
             !namedVesper &&
-            !mentionedBot
+            !mentionedBot &&
+            !replyingToVesper
         ) {
             return;
         }
@@ -961,9 +1182,21 @@ client.on(
                             client.user.id
                         );
 
+                    /*
+                     * Always include the message
+                     * that triggered this response.
+                     *
+                     * Important for replies that
+                     * contain only an image / GIF.
+                     */
+                    const currentMessage =
+                        msg.id ===
+                        message.id;
+
                     if (
                         !namedVesper &&
-                        !mentionsVesper
+                        !mentionsVesper &&
+                        !currentMessage
                     ) {
                         continue;
                     }
@@ -1004,7 +1237,9 @@ client.on(
                             username,
 
                         content:
-                            msg.content,
+                            buildUserContent(
+                                msg
+                            ),
                     });
                 }
             }
