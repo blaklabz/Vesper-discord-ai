@@ -24,6 +24,12 @@ const {
     "./game-play/gameRouter"
 );
 
+const {
+    recordDiscovery,
+} = require(
+    "./game-play/gameDatabase"
+);
+
 
 /*
  * -------------------------------------------------------
@@ -1056,28 +1062,38 @@ client.on(
                 Date.now();
 
 
+            const testGame = {
+                title,
+
+                url:
+                    `test://${testId}`,
+
+                game_key:
+                    `test:${testId}`,
+
+                messageId:
+                    message.id,
+
+                channelId:
+                    message.channelId,
+
+                discoverySource:
+                    "manual-test",
+
+                discoveredAt:
+                    Date.now(),
+            };
+
+
+            recordDiscovery(
+                testGame
+            );
+
+
             const added =
-                enqueueGame({
-                    title,
-
-                    url:
-                        `test://${testId}`,
-
-                    game_key:
-                        `test:${testId}`,
-
-                    messageId:
-                        message.id,
-
-                    channelId:
-                        message.channelId,
-
-                    discoverySource:
-                        "manual-test",
-
-                    discoveredAt:
-                        Date.now(),
-                });
+                enqueueGame(
+                    testGame
+                );
 
 
             if (added) {
