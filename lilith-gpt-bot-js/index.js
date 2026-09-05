@@ -82,11 +82,11 @@ function randomBetween(
 ) {
     return Math.floor(
         Math.random() *
-            (
-                max -
-                min +
-                1
-            )
+        (
+            max -
+            min +
+            1
+        )
     ) + min;
 }
 
@@ -843,6 +843,7 @@ client.on(
         /*
          * Ignore other bots.
          */
+
         if (
             message.author.bot
         ) {
@@ -853,6 +854,7 @@ client.on(
         /*
          * Ignore broadcasts.
          */
+
         if (
             message.content.includes(
                 "@here"
@@ -889,34 +891,22 @@ client.on(
             );
 
 
-        const messageIsMedia =
-            messageHasMedia(
-                message
-            );
-
-
-        /*
-         * MEDIA ALWAYS WINS.
-         */
-        if (
-            messageIsMedia
-        ) {
-            debugMessageRouting(
-                message,
-                "media"
-            );
-        }
-
-
         /*
          * ------------------------------------------------
          * KNOWN GAME URL
          * ------------------------------------------------
+         *
+         * IMPORTANT:
+         *
+         * Game URLs are checked BEFORE media.
+         *
+         * Steam/Epic/etc. generate preview embeds
+         * containing images. Those images must not
+         * cause the post itself to be routed as media.
          */
 
         if (
             allowedChannel &&
-            !messageIsMedia &&
             urlClassification.type ===
                 "game"
         ) {
@@ -939,8 +929,32 @@ client.on(
 
 
         /*
-         * Temporary routing debug.
+         * ------------------------------------------------
+         * MEDIA
+         * ------------------------------------------------
          */
+
+        const messageIsMedia =
+            messageHasMedia(
+                message
+            );
+
+
+        if (
+            messageIsMedia
+        ) {
+            debugMessageRouting(
+                message,
+                "media"
+            );
+        }
+
+
+        /*
+         * Temporary routing debug for
+         * ordinary non-media URLs.
+         */
+
         if (
             postedUrl &&
             !messageIsMedia
@@ -1038,12 +1052,19 @@ client.on(
                 );
 
 
+            const testId =
+                Date.now();
+
+
             const added =
                 enqueueGame({
                     title,
 
                     url:
-                        `test://${Date.now()}`,
+                        `test://${testId}`,
+
+                    game_key:
+                        `test:${testId}`,
 
                     messageId:
                         message.id,
@@ -1199,6 +1220,7 @@ client.on(
                 /*
                  * Ignore other bots.
                  */
+
                 if (
                     msg.author.bot &&
                     msg.author.id !==

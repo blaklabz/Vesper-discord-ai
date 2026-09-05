@@ -16,10 +16,10 @@ const {
  * DISCOVERY MEMORY
  * -------------------------------------------------------
  *
- * This is Vesper's in-process memory of games
- * that have already been posted during this run.
+ * Temporary in-process memory.
  *
- * Later this will move into persistent game history.
+ * Once we build the database this becomes
+ * persistent game history instead.
  */
 
 const seenGames =
@@ -34,9 +34,11 @@ function getSeenGame(
             game
         );
 
+
     if (!gameKey) {
         return null;
     }
+
 
     return (
         seenGames.get(
@@ -54,6 +56,7 @@ function rememberGame(
         getGameKey(
             game
         );
+
 
     if (!gameKey) {
         return false;
@@ -113,6 +116,42 @@ function rememberGame(
 
 /*
  * -------------------------------------------------------
+ * TITLE NORMALIZATION
+ * -------------------------------------------------------
+ */
+
+function cleanGameTitle(
+    title
+) {
+    if (!title) {
+        return null;
+    }
+
+
+    const cleaned =
+        String(
+            title
+        )
+            .replace(
+                /\s+on\s+steam\s*$/i,
+                ""
+            )
+            .replace(
+                /^\s*playing\s+/i,
+                ""
+            )
+            .trim();
+
+
+    return (
+        cleaned ||
+        null
+    );
+}
+
+
+/*
+ * -------------------------------------------------------
  * COMPONENT / GAME TITLE PARSING
  * -------------------------------------------------------
  */
@@ -122,12 +161,19 @@ function extractComponentText(
 ) {
     const chunks = [];
 
-    function walk(items) {
-        for (const item of items) {
+
+    function walk(
+        items
+    ) {
+        for (
+            const item
+            of items
+        ) {
             const data =
                 item.toJSON
                     ? item.toJSON()
                     : item;
+
 
             if (
                 data.type === 10 &&
@@ -138,6 +184,7 @@ function extractComponentText(
                     data.content
                 );
             }
+
 
             if (
                 Array.isArray(
@@ -151,9 +198,11 @@ function extractComponentText(
         }
     }
 
+
     walk(
         components
     );
+
 
     return chunks.join(
         "\n"
@@ -168,14 +217,17 @@ function extractFirstUrl(
         return null;
     }
 
+
     const match =
         content.match(
             /https?:\/\/[^\s<>)\]]+/i
         );
 
+
     if (!match) {
         return null;
     }
+
 
     return match[0].replace(
         /[),.!]+$/,
@@ -191,6 +243,7 @@ function extractGameTitle(
     let text =
         content || "";
 
+
     if (url) {
         text =
             text.replace(
@@ -198,6 +251,7 @@ function extractGameTitle(
                 ""
             );
     }
+
 
     text =
         text
@@ -215,14 +269,18 @@ function extractGameTitle(
             )
             .trim();
 
+
     const firstLine =
         text
             .split("\n")[0]
             .trim();
 
-    return firstLine.slice(
-        0,
-        128
+
+    return cleanGameTitle(
+        firstLine.slice(
+            0,
+            128
+        )
     );
 }
 
@@ -236,6 +294,7 @@ function extractGameTitleFromUrl(
                 url
             );
 
+
         const host =
             parsed.hostname
                 .toLowerCase()
@@ -243,6 +302,7 @@ function extractGameTitleFromUrl(
                     /^www\./,
                     ""
                 );
+
 
         const parts =
             parsed.pathname
@@ -253,17 +313,21 @@ function extractGameTitleFromUrl(
 
 
         /*
-         * Steam normal URL:
+         * ------------------------------------------------
+         * STEAM
+         * ------------------------------------------------
          *
-         * /app/3517740/Frostrail/
+         * Normal:
          *
-         * Steam age check:
+         * /app/924970/Back_4_Blood/
+         *
+         * Age check:
          *
          * /agecheck/app/924970/
          *
-         * Age-check URLs without a slug
-         * return null here. GameHunter has
-         * final authority over the title.
+         * Age-check URLs normally do not contain
+         * the title slug, so return null and let
+         * GameHunter / Discord embed resolve it.
          */
 
         if (
@@ -275,23 +339,26 @@ function extractGameTitleFromUrl(
                     "app"
                 );
 
+
             if (
                 appIndex !== -1 &&
                 parts[
                     appIndex + 2
                 ]
             ) {
-                return decodeURIComponent(
-                    parts[
-                        appIndex + 2
-                    ]
-                )
-                    .replace(
-                        /_/g,
-                        " "
+                return cleanGameTitle(
+                    decodeURIComponent(
+                        parts[
+                            appIndex + 2
+                        ]
                     )
-                    .trim();
+                        .replace(
+                            /_/g,
+                            " "
+                        )
+                );
             }
+
 
             return null;
         }
@@ -300,17 +367,19 @@ function extractGameTitleFromUrl(
         if (
             parts.length > 0
         ) {
-            return decodeURIComponent(
-                parts[
-                    parts.length - 1
-                ]
-            )
-                .replace(
-                    /[-_]/g,
-                    " "
+            return cleanGameTitle(
+                decodeURIComponent(
+                    parts[
+                        parts.length - 1
+                    ]
                 )
-                .trim();
+                    .replace(
+                        /[-_]/g,
+                        " "
+                    )
+            );
         }
+
 
         return null;
 
@@ -330,15 +399,19 @@ function extractEmbedContext(
         return null;
     }
 
+
     const embed =
         message.embeds[0];
+
 
     return {
         type:
             embed.type || null,
 
         title:
-            embed.title || null,
+            cleanGameTitle(
+                embed.title
+            ),
 
         description:
             embed.description || null,
@@ -434,6 +507,7 @@ function runGameHunter(
                         error
                     );
 
+
                     resolve({
                         status:
                             "error",
@@ -467,6 +541,7 @@ function runGameHunter(
                                 "empty_hunter_output",
                         });
 
+
                         return;
                     }
 
@@ -483,6 +558,7 @@ function runGameHunter(
                             "[game-hunter] invalid JSON:",
                             stdout
                         );
+
 
                         resolve({
                             status:
@@ -542,12 +618,12 @@ async function reactToGamePost(
                                 "You are Vesper, a casual witty gaming AI hanging out in Discord. " +
                                 "Someone just posted a game you have not encountered during this session before. " +
                                 "React casually and naturally as if you just noticed it and are considering checking it out. " +
-                                "Use the supplied description for context. " +
+                                "Use the supplied game description for context. " +
                                 "Do not mechanically summarize the game. " +
-                                "Do not mention metadata, an embed, source text, scraping, reviews, or APIs. " +
+                                "Do not mention metadata, embeds, source text, scraping, reviews, APIs, or software internals. " +
                                 "Do not claim you have played the game. " +
                                 "You may say you want to check it out or try it. " +
-                                "Keep it to one or two short sentences.",
+                                "Keep the response to one or two short sentences.",
                         },
                         {
                             role:
@@ -603,7 +679,9 @@ async function reactToDuplicateGamePost(
 
 
     const samePoster =
-        previous?.authorId &&
+        Boolean(
+            previous?.authorId
+        ) &&
         previous.authorId ===
             message.author.id;
 
@@ -620,15 +698,15 @@ async function reactToDuplicateGamePost(
         situation =
             "The same person who posted this game before has posted the exact same game again. " +
             "You recognize it immediately. " +
-            "Give them a short playful or dry snarky response about showing you the same game again. " +
-            "You can lightly roast them. " +
+            "Respond with short playful, dry, or sarcastic snark about them showing you the same game again. " +
+            "You may lightly roast them. " +
             "Do not be genuinely hostile.";
 
     } else {
         situation =
             `This game was already posted earlier by ${previousPoster}. ` +
-            "A different person has now posted it again. " +
-            "You recognize the game and should casually mention that it already came through.";
+            "A different person has now posted it. " +
+            "You recognize the game and should casually mention that someone already brought it up.";
     }
 
 
@@ -651,7 +729,7 @@ async function reactToDuplicateGamePost(
                                 situation +
                                 " Do not pretend this is a new discovery. " +
                                 "Do not claim you have played the game unless explicitly told that you have. " +
-                                "Do not mention databases, IDs, duplicate detection, metadata, scraping, memory systems, or software internals. " +
+                                "Do not mention databases, IDs, duplicate detection, metadata, scraping, memory systems, APIs, or software internals. " +
                                 "Sound like a person who simply remembers seeing it. " +
                                 "Keep the response to one or two short sentences.",
                         },
@@ -707,6 +785,11 @@ function buildScheduledGame(
     return {
         ...hunterResult,
 
+        title:
+            cleanGameTitle(
+                hunterResult.title
+            ),
+
         messageId:
             message.id,
 
@@ -742,6 +825,7 @@ function hunterResultUsable(
             hunterResult.error
         );
 
+
         return false;
     }
 
@@ -754,6 +838,7 @@ function hunterResultUsable(
             `[game-play] blocked source: ${originalUrl}`
         );
 
+
         return false;
     }
 
@@ -765,6 +850,7 @@ function hunterResultUsable(
         console.log(
             `[game-play] unusable hunter result: ${hunterResult.status}`
         );
+
 
         return false;
     }
@@ -799,9 +885,11 @@ async function handleKnownGameUrl(
 
 
     const candidateTitle =
-        urlTitle ||
-        embedContext?.title ||
-        null;
+        cleanGameTitle(
+            urlTitle ||
+            embedContext?.title ||
+            null
+        );
 
 
     console.log(
@@ -832,6 +920,19 @@ async function handleKnownGameUrl(
     }
 
 
+    /*
+     * GameHunter is authoritative, but normalize
+     * storefront suffixes before anything else
+     * gets the result.
+     */
+
+    hunterResult.title =
+        cleanGameTitle(
+            hunterResult.title ||
+            candidateTitle
+        );
+
+
     console.log(
         `[game-play] approved game source: ${hunterResult.url}`
     );
@@ -857,7 +958,7 @@ async function handleKnownGameUrl(
 
     /*
      * ------------------------------------------------
-     * HAS VESPER SEEN THIS BEFORE?
+     * PREVIOUSLY SEEN
      * ------------------------------------------------
      */
 
@@ -898,9 +999,8 @@ async function handleKnownGameUrl(
 
 
     /*
-     * There can theoretically be an active
-     * game that entered through another path
-     * without being in discovery memory.
+     * Safety check for something that somehow
+     * entered the manager through another path.
      */
 
     if (
@@ -913,16 +1013,16 @@ async function handleKnownGameUrl(
             `${hunterResult.title}`
         );
 
+
         return true;
     }
 
 
     /*
-     * Remember it BEFORE the OpenAI call.
+     * Remember BEFORE generating the reaction.
      *
-     * That way if two identical messages arrive
-     * close together, the second one already sees
-     * the first as a duplicate.
+     * This prevents two messages arriving close
+     * together from both looking like first posts.
      */
 
     rememberGame(
@@ -974,6 +1074,7 @@ async function handleFreeStuffMessage(
             "[game-play] FreeStuff message had no readable text"
         );
 
+
         return false;
     }
 
@@ -989,17 +1090,20 @@ async function handleFreeStuffMessage(
             "[game-play] FreeStuff message had no URL"
         );
 
+
         return false;
     }
 
 
     const candidateTitle =
-        extractGameTitle(
-            sourceText,
-            url
-        ) ||
-        extractGameTitleFromUrl(
-            url
+        cleanGameTitle(
+            extractGameTitle(
+                sourceText,
+                url
+            ) ||
+            extractGameTitleFromUrl(
+                url
+            )
         );
 
 
@@ -1028,6 +1132,13 @@ async function handleFreeStuffMessage(
     ) {
         return false;
     }
+
+
+    hunterResult.title =
+        cleanGameTitle(
+            hunterResult.title ||
+            candidateTitle
+        );
 
 
     console.log(
@@ -1060,6 +1171,7 @@ async function handleFreeStuffMessage(
             `${hunterResult.title}`
         );
 
+
         return true;
     }
 
@@ -1073,6 +1185,7 @@ async function handleFreeStuffMessage(
             `[game-play] FreeStuff active duplicate ignored: ` +
             `${hunterResult.title}`
         );
+
 
         return true;
     }
