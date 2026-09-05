@@ -90,9 +90,7 @@ def clean_text(value):
 
 def get_hostname(url):
     try:
-        parsed = urllib.parse.urlparse(
-            url
-        )
+        parsed = urllib.parse.urlparse(url)
 
         if parsed.scheme not in (
             "http",
@@ -110,9 +108,7 @@ def get_hostname(url):
 
 
 def is_approved_url(url):
-    hostname = get_hostname(
-        url
-    )
+    hostname = get_hostname(url)
 
     if not hostname:
         return False
@@ -120,18 +116,14 @@ def is_approved_url(url):
     if hostname in APPROVED_DOMAINS:
         return True
 
-    if hostname.endswith(
-        ".itch.io"
-    ):
+    if hostname.endswith(".itch.io"):
         return True
 
     return False
 
 
 def get_source(url):
-    hostname = get_hostname(
-        url
-    )
+    hostname = get_hostname(url)
 
     if hostname == "store.steampowered.com":
         return "steam"
@@ -147,9 +139,7 @@ def get_source(url):
 
     if (
         hostname == "itch.io"
-        or hostname.endswith(
-            ".itch.io"
-        )
+        or hostname.endswith(".itch.io")
     ):
         return "itch"
 
@@ -166,8 +156,7 @@ def build_request(url, accept=None):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 "
-            "(compatible; "
-            "VesperGameHunter/1.0)"
+            "(compatible; VesperGameHunter/1.0)"
         ),
     }
 
@@ -196,25 +185,14 @@ def fetch_page(url):
 
         final_url = response.geturl()
 
-        #
-        # urllib follows redirects.
-        #
-        # Make sure an approved URL did
-        # not redirect GameHunter somewhere
-        # we don't trust.
-        #
-        if not is_approved_url(
-            final_url
-        ):
+        if not is_approved_url(final_url):
             raise ValueError(
                 "redirected_to_unapproved_domain"
             )
 
-        content_type = (
-            response.headers.get(
-                "Content-Type",
-                "",
-            )
+        content_type = response.headers.get(
+            "Content-Type",
+            "",
         )
 
         if (
@@ -258,13 +236,6 @@ def fetch_json(url):
         timeout=HTTP_TIMEOUT,
     ) as response:
 
-        content_type = (
-            response.headers.get(
-                "Content-Type",
-                "",
-            )
-        )
-
         body = response.read(
             MAX_PAGE_BYTES
         )
@@ -283,9 +254,7 @@ def fetch_json(url):
         )
 
         try:
-            return json.loads(
-                text
-            )
+            return json.loads(text)
 
         except json.JSONDecodeError:
             raise ValueError(
@@ -296,9 +265,7 @@ def fetch_json(url):
 def parse_game_page(body):
     parser = GamePageParser()
 
-    parser.feed(
-        body
-    )
+    parser.feed(body)
 
     meta = parser.meta
 
@@ -307,41 +274,29 @@ def parse_game_page(body):
             meta.get("og:title")
         )
         or clean_text(
-            meta.get(
-                "twitter:title"
-            )
+            meta.get("twitter:title")
         )
         or parser.get_html_title()
     )
 
     description = (
         clean_text(
-            meta.get(
-                "og:description"
-            )
+            meta.get("og:description")
         )
         or clean_text(
-            meta.get(
-                "twitter:description"
-            )
+            meta.get("twitter:description")
         )
         or clean_text(
-            meta.get(
-                "description"
-            )
+            meta.get("description")
         )
     )
 
     image = (
         clean_text(
-            meta.get(
-                "og:image"
-            )
+            meta.get("og:image")
         )
         or clean_text(
-            meta.get(
-                "twitter:image"
-            )
+            meta.get("twitter:image")
         )
     )
 
@@ -350,6 +305,33 @@ def parse_game_page(body):
         "description": description,
         "image": image,
     }
+
+
+def clean_page_title(title):
+    title = clean_text(title)
+
+    if not title:
+        return None
+
+    suffixes = (
+        " on Steam",
+        " | Steam",
+        " - Steam",
+        " on GOG.com",
+        " | GOG.com",
+        " - GOG.com",
+        " | Epic Games Store",
+        " - Epic Games Store",
+        " on Epic Games Store",
+    )
+
+    for suffix in suffixes:
+        if title.endswith(suffix):
+            title = title[
+                :-len(suffix)
+            ].strip()
+
+    return title
 
 
 def choose_title(
@@ -368,54 +350,13 @@ def choose_title(
     )
 
 
-def clean_page_title(title):
-    title = clean_text(
-        title
-    )
-
-    if not title:
-        return None
-
-    suffixes = (
-        " on Steam",
-        " | Steam",
-        " - Steam",
-        " on GOG.com",
-        " | GOG.com",
-        " - GOG.com",
-        " | Epic Games Store",
-        " - Epic Games Store",
-        " on Epic Games Store",
-        " by itch.io",
-    )
-
-    for suffix in suffixes:
-        if title.endswith(
-            suffix
-        ):
-            title = title[
-                :-len(suffix)
-            ].strip()
-
-    return title
-
-
-#
-# Steam
-#
-
-
 def get_steam_appid(url):
-    hostname = get_hostname(
-        url
-    )
+    hostname = get_hostname(url)
 
     if hostname != "store.steampowered.com":
         return None
 
-    parsed = urllib.parse.urlparse(
-        url
-    )
+    parsed = urllib.parse.urlparse(url)
 
     match = re.search(
         r"/app/(\d+)",
@@ -451,9 +392,7 @@ def get_steam_reviews(appid):
     )
 
     try:
-        data = fetch_json(
-            url
-        )
+        data = fetch_json(url)
 
     except Exception as error:
         return {
@@ -467,9 +406,10 @@ def get_steam_reviews(appid):
             "error": "steam_review_request_failed",
         }
 
-    summary = data.get(
-        "query_summary"
-    ) or {}
+    summary = (
+        data.get("query_summary")
+        or {}
+    )
 
     positive = int(
         summary.get(
@@ -521,31 +461,6 @@ def get_steam_reviews(appid):
     }
 
 
-def build_steam_context(url):
-    appid = get_steam_appid(
-        url
-    )
-
-    if not appid:
-        return {
-            "appid": None,
-            "reviews": None,
-        }
-
-    return {
-        "appid": appid,
-        "reviews":
-            get_steam_reviews(
-                appid
-            ),
-    }
-
-
-#
-# Game context
-#
-
-
 def build_game_context(
     source,
     url,
@@ -555,17 +470,18 @@ def build_game_context(
     }
 
     if source == "steam":
-        steam = build_steam_context(
+        appid = get_steam_appid(
             url
         )
 
         context["steam"] = {
-            "appid":
-                steam["appid"],
+            "appid": appid,
         }
 
         context["reviews"] = (
-            steam["reviews"]
+            get_steam_reviews(
+                appid
+            )
         )
 
     return context
@@ -574,7 +490,7 @@ def build_game_context(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Gather game/storefront "
+            "Gather storefront and review "
             "information for Vesper."
         )
     )
@@ -594,25 +510,16 @@ def main():
     url = args.url
     supplied_title = args.title
 
-    #
-    # Block unknown storefronts before
-    # making any HTTP request.
-    #
-    if not is_approved_url(
-        url
-    ):
+    if not is_approved_url(url):
         print(
             json.dumps(
                 {
                     "status":
                         "blocked_source",
-
                     "title":
                         supplied_title,
-
                     "url":
                         url,
-
                     "reason":
                         "domain_not_approved",
                 },
@@ -623,9 +530,7 @@ def main():
         return 0
 
     try:
-        page = fetch_page(
-            url
-        )
+        page = fetch_page(url)
 
         source = get_source(
             page["url"]
@@ -637,9 +542,7 @@ def main():
 
         title = choose_title(
             supplied_title,
-            parsed[
-                "page_title"
-            ],
+            parsed["page_title"],
         )
 
         game_context = (
@@ -651,45 +554,22 @@ def main():
 
         result = {
             "status": "ok",
-
             "source": source,
-
             "title": title,
-
             "page_title":
-                parsed[
-                    "page_title"
-                ],
-
-            "url":
-                page["url"],
-
+                parsed["page_title"],
+            "url": page["url"],
             "description":
-                parsed[
-                    "description"
-                ],
-
+                parsed["description"],
             "image":
-                parsed[
-                    "image"
-                ],
-
+                parsed["image"],
             "reviews":
-                game_context[
-                    "reviews"
-                ],
+                game_context["reviews"],
         }
 
-        #
-        # Source-specific identifiers are
-        # useful downstream, but keep the
-        # general schema storefront-neutral.
-        #
         if "steam" in game_context:
             result["steam"] = (
-                game_context[
-                    "steam"
-                ]
+                game_context["steam"]
             )
 
         print(
@@ -705,15 +585,10 @@ def main():
         print(
             json.dumps(
                 {
-                    "status":
-                        "error",
-
+                    "status": "error",
                     "title":
                         supplied_title,
-
-                    "url":
-                        url,
-
+                    "url": url,
                     "error":
                         str(error),
                 },
