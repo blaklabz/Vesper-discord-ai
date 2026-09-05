@@ -2,17 +2,24 @@ const {
     ActivityType,
 } = require('discord.js');
 
+const {
+    shouldQueueGame,
+} = require('./game-decision');
+
+
 const MIN_PLAY_MINUTES = 10;
 const MAX_PLAY_MINUTES = 60;
 
 const MIN_DISCOVERY_DELAY_MINUTES = 2;
 const MAX_DISCOVERY_DELAY_MINUTES = 8;
 
+
 const queue = [];
 const scheduledGames = new Map();
 
 let currentGame = null;
 let playTimer = null;
+
 
 function randomInteger(min, max) {
     return (
@@ -22,6 +29,7 @@ function randomInteger(min, max) {
         ) + min
     );
 }
+
 
 function randomPlayDurationMs() {
     const minutes =
@@ -36,6 +44,7 @@ function randomPlayDurationMs() {
     };
 }
 
+
 function randomDiscoveryDelayMs() {
     const minutes =
         randomInteger(
@@ -48,6 +57,7 @@ function randomDiscoveryDelayMs() {
         ms: minutes * 60 * 1000,
     };
 }
+
 
 function gameAlreadyKnown(game) {
     if (!game?.url) {
@@ -75,6 +85,53 @@ function gameAlreadyKnown(game) {
     );
 }
 
+
+function logReviewContext(game) {
+    const reviews =
+        game?.reviews;
+
+    if (!reviews) {
+        console.log(
+            `[game-play] reviews unavailable: ${game.title}`
+        );
+
+        return;
+    }
+
+    if (!reviews.available) {
+        console.log(
+            `[game-play] reviews unavailable: ` +
+            `${game.title}` +
+            (
+                reviews.error
+                    ? ` (${reviews.error})`
+                    : ''
+            )
+        );
+
+        return;
+    }
+
+    const summary =
+        reviews.summary
+        || 'Unknown';
+
+    const percent =
+        reviews.positive_percent;
+
+    const total =
+        reviews.total
+        || 0;
+
+    console.log(
+        `[game-play] reviews: ${game.title} - ` +
+        `${summary}; ` +
+        `${percent}% positive ` +
+        `(${total} review(s))`
+    );
+}
+
+
 function enqueueGame(game) {
     if (gameAlreadyKnown(game)) {
         console.log(
@@ -92,6 +149,43 @@ function enqueueGame(game) {
 
     return true;
 }
+
+
+function considerGame(game, client) {
+    console.log(
+        `[game-play] considering: ${game.title}`
+    );
+
+    logReviewContext(game);
+
+    const result =
+        shouldQueueGame(game);
+
+    if (!result.shouldQueue) {
+        console.log(
+            `[game-play] Vesper refused: ` +
+            `${game.title} - ` +
+            `${result.decision.reason}`
+        );
+
+        return false;
+    }
+
+    console.log(
+        `[game-play] Vesper accepted: ` +
+        `${game.title}`
+    );
+
+    const added =
+        enqueueGame(game);
+
+    if (added) {
+        startNextGame(client);
+    }
+
+    return added;
+}
+
 
 function scheduleGame(game, client) {
     if (gameAlreadyKnown(game)) {
@@ -117,12 +211,10 @@ function scheduleGame(game, client) {
                     game.url
                 );
 
-                const added =
-                    enqueueGame(game);
-
-                if (added) {
-                    startNextGame(client);
-                }
+                considerGame(
+                    game,
+                    client
+                );
             },
             delay.ms
         );
@@ -139,6 +231,7 @@ function scheduleGame(game, client) {
 
     return true;
 }
+
 
 function chooseRandomQueuedGame() {
     if (queue.length === 0) {
@@ -157,12 +250,14 @@ function chooseRandomQueuedGame() {
     )[0];
 }
 
+
 function clearPlayingActivity(client) {
     client.user.setPresence({
         activities: [],
         status: 'online',
     });
 }
+
 
 function startNextGame(client) {
     if (
@@ -212,11 +307,14 @@ function startNextGame(client) {
     playTimer =
         setTimeout(
             () => {
-                finishCurrentGame(client);
+                finishCurrentGame(
+                    client
+                );
             },
             duration.ms
         );
 }
+
 
 function finishCurrentGame(client) {
     if (!currentGame) {
@@ -224,50 +322,68 @@ function finishCurrentGame(client) {
     }
 
     console.log(
-        `[game-play] Vesper finished playing: ${currentGame.title}`
+        `[game-play] Vesper finished playing: ` +
+        `${currentGame.title}`
     );
 
     currentGame = null;
 
     if (playTimer) {
-        clearTimeout(playTimer);
+        clearTimeout(
+            playTimer
+        );
+
         playTimer = null;
     }
 
-    clearPlayingActivity(client);
+    clearPlayingActivity(
+        client
+    );
 
     console.log(
         '[game-play] cleared playing activity'
     );
 
-    startNextGame(client);
+    startNextGame(
+        client
+    );
 }
+
 
 function getCurrentGame() {
     return currentGame;
 }
 
+
 function getQueue() {
-    return [...queue];
+    return [
+        ...queue
+    ];
 }
+
 
 function getScheduledGames() {
     return [
         ...scheduledGames.values(),
     ].map(
         (entry) => ({
-            game: entry.game,
+            game:
+                entry.game,
+
             scheduledAt:
                 entry.scheduledAt,
+
             delayMinutes:
                 entry.delayMinutes,
         })
     );
 }
 
+
 module.exports = {
     enqueueGame,
     scheduleGame,
+    considerGame,
     startNextGame,
     finishCurrentGame,
     getCurrentGame,
