@@ -6,7 +6,109 @@ const {
 
 const {
     scheduleGame,
+    gameAlreadyKnown,
+    getGameKey,
 } = require("./gameManager");
+
+
+/*
+ * -------------------------------------------------------
+ * DISCOVERY MEMORY
+ * -------------------------------------------------------
+ *
+ * This is Vesper's in-process memory of games
+ * that have already been posted during this run.
+ *
+ * Later this will move into persistent game history.
+ */
+
+const seenGames =
+    new Map();
+
+
+function getSeenGame(
+    game
+) {
+    const gameKey =
+        getGameKey(
+            game
+        );
+
+    if (!gameKey) {
+        return null;
+    }
+
+    return (
+        seenGames.get(
+            gameKey
+        ) ||
+        null
+    );
+}
+
+
+function rememberGame(
+    game
+) {
+    const gameKey =
+        getGameKey(
+            game
+        );
+
+    if (!gameKey) {
+        return false;
+    }
+
+
+    if (
+        seenGames.has(
+            gameKey
+        )
+    ) {
+        return false;
+    }
+
+
+    seenGames.set(
+        gameKey,
+        {
+            gameKey,
+
+            title:
+                game.title,
+
+            url:
+                game.url,
+
+            authorId:
+                game.authorId ||
+                null,
+
+            authorUsername:
+                game.authorUsername ||
+                null,
+
+            messageId:
+                game.messageId ||
+                null,
+
+            channelId:
+                game.channelId ||
+                null,
+
+            discoverySource:
+                game.discoverySource ||
+                null,
+
+            firstSeenAt:
+                game.discoveredAt ||
+                Date.now(),
+        }
+    );
+
+
+    return true;
+}
 
 
 /*
@@ -159,11 +261,11 @@ function extractGameTitleFromUrl(
          *
          * /agecheck/app/924970/
          *
-         * An age-check URL without a slug
-         * intentionally returns null here.
-         * GameHunter will resolve the real
-         * title from the canonical store page.
+         * Age-check URLs without a slug
+         * return null here. GameHunter has
+         * final authority over the title.
          */
+
         if (
             host ===
             "store.steampowered.com"
@@ -279,6 +381,7 @@ function runGameHunter(
                 game.url,
             ];
 
+
             if (
                 game.title
             ) {
@@ -287,6 +390,7 @@ function runGameHunter(
                     game.title
                 );
             }
+
 
             const hunter =
                 spawn(
@@ -298,6 +402,7 @@ function runGameHunter(
                             "/..",
                     }
                 );
+
 
             let stdout = "";
             let stderr = "";
@@ -350,6 +455,7 @@ function runGameHunter(
                         );
                     }
 
+
                     if (
                         !stdout.trim()
                     ) {
@@ -364,6 +470,7 @@ function runGameHunter(
                         return;
                     }
 
+
                     try {
                         resolve(
                             JSON.parse(
@@ -371,7 +478,7 @@ function runGameHunter(
                             )
                         );
 
-                    } catch (error) {
+                    } catch {
                         console.error(
                             "[game-hunter] invalid JSON:",
                             stdout
@@ -394,7 +501,7 @@ function runGameHunter(
 
 /*
  * -------------------------------------------------------
- * VESPER GAME REACTION
+ * FIRST-TIME GAME REACTION
  * -------------------------------------------------------
  */
 
@@ -408,12 +515,14 @@ async function reactToGamePost(
         game?.description ||
         embedContext?.description;
 
+
     if (
         !description ||
         !openai
     ) {
         return;
     }
+
 
     try {
         const response =
@@ -430,15 +539,15 @@ async function reactToGamePost(
                                 "system",
 
                             content:
-                                "You are Vesper. " +
-                                "Someone just posted a game in Discord. " +
+                                "You are Vesper, a casual witty gaming AI hanging out in Discord. " +
+                                "Someone just posted a game you have not encountered during this session before. " +
                                 "React casually and naturally as if you just noticed it and are considering checking it out. " +
-                                "Use the supplied game description for context. " +
+                                "Use the supplied description for context. " +
                                 "Do not mechanically summarize the game. " +
-                                "Do not say you read an embed, description, metadata, or source text. " +
-                                "Do not claim you have already played the game. " +
+                                "Do not mention metadata, an embed, source text, scraping, reviews, or APIs. " +
+                                "Do not claim you have played the game. " +
                                 "You may say you want to check it out or try it. " +
-                                "Keep the response to one or two short sentences.",
+                                "Keep it to one or two short sentences.",
                         },
                         {
                             role:
@@ -457,19 +566,127 @@ async function reactToGamePost(
                 .choices?.[0]
                 ?.message?.content;
 
+
         if (!reaction) {
             return;
         }
 
-        await message
-            .channel
-            .send(
-                `${message.author} ${reaction}`
-            );
+
+        await message.reply(
+            reaction
+        );
 
     } catch (error) {
         console.error(
             "[game-play] Could not generate game reaction:",
+            error
+        );
+    }
+}
+
+
+/*
+ * -------------------------------------------------------
+ * DUPLICATE GAME REACTION
+ * -------------------------------------------------------
+ */
+
+async function reactToDuplicateGamePost(
+    message,
+    game,
+    previous,
+    openai
+) {
+    if (!openai) {
+        return;
+    }
+
+
+    const samePoster =
+        previous?.authorId &&
+        previous.authorId ===
+            message.author.id;
+
+
+    const previousPoster =
+        previous?.authorUsername ||
+        "someone";
+
+
+    let situation;
+
+
+    if (samePoster) {
+        situation =
+            "The same person who posted this game before has posted the exact same game again. " +
+            "You recognize it immediately. " +
+            "Give them a short playful or dry snarky response about showing you the same game again. " +
+            "You can lightly roast them. " +
+            "Do not be genuinely hostile.";
+
+    } else {
+        situation =
+            `This game was already posted earlier by ${previousPoster}. ` +
+            "A different person has now posted it again. " +
+            "You recognize the game and should casually mention that it already came through.";
+    }
+
+
+    try {
+        const response =
+            await openai
+                .chat
+                .completions
+                .create({
+                    model:
+                        "gpt-5.5",
+
+                    messages: [
+                        {
+                            role:
+                                "system",
+
+                            content:
+                                "You are Vesper, a casual witty gaming AI hanging out in Discord. " +
+                                situation +
+                                " Do not pretend this is a new discovery. " +
+                                "Do not claim you have played the game unless explicitly told that you have. " +
+                                "Do not mention databases, IDs, duplicate detection, metadata, scraping, memory systems, or software internals. " +
+                                "Sound like a person who simply remembers seeing it. " +
+                                "Keep the response to one or two short sentences.",
+                        },
+                        {
+                            role:
+                                "user",
+
+                            content:
+                                `Game: ${game.title}\n` +
+                                `Current poster: ${message.author.username}\n` +
+                                `Previous poster: ${previousPoster}\n` +
+                                `Same poster: ${samePoster ? "yes" : "no"}`,
+                        },
+                    ],
+                });
+
+
+        const reaction =
+            response
+                .choices?.[0]
+                ?.message?.content;
+
+
+        if (!reaction) {
+            return;
+        }
+
+
+        await message.reply(
+            reaction
+        );
+
+    } catch (error) {
+        console.error(
+            "[game-play] Could not generate duplicate game reaction:",
             error
         );
     }
@@ -496,6 +713,14 @@ function buildScheduledGame(
         channelId:
             message.channelId,
 
+        authorId:
+            message.author?.id ||
+            null,
+
+        authorUsername:
+            message.author?.username ||
+            null,
+
         discoverySource,
 
         discoveredAt:
@@ -520,6 +745,7 @@ function hunterResultUsable(
         return false;
     }
 
+
     if (
         hunterResult.status ===
         "blocked_source"
@@ -531,6 +757,7 @@ function hunterResultUsable(
         return false;
     }
 
+
     if (
         hunterResult.status !==
         "ok"
@@ -541,6 +768,7 @@ function hunterResultUsable(
 
         return false;
     }
+
 
     return true;
 }
@@ -563,10 +791,12 @@ async function handleKnownGameUrl(
             gameUrl
         );
 
+
     const embedContext =
         extractEmbedContext(
             message
         );
+
 
     const candidateTitle =
         urlTitle ||
@@ -606,6 +836,7 @@ async function handleKnownGameUrl(
         `[game-play] approved game source: ${hunterResult.url}`
     );
 
+
     console.log(
         `[game-play] identified game: ${hunterResult.title}` +
         (
@@ -613,6 +844,89 @@ async function handleKnownGameUrl(
                 ? ` (${hunterResult.game_key})`
                 : ""
         )
+    );
+
+
+    const scheduledGame =
+        buildScheduledGame(
+            hunterResult,
+            message,
+            "channel-game-post"
+        );
+
+
+    /*
+     * ------------------------------------------------
+     * HAS VESPER SEEN THIS BEFORE?
+     * ------------------------------------------------
+     */
+
+    const previous =
+        getSeenGame(
+            scheduledGame
+        );
+
+
+    if (previous) {
+        const samePoster =
+            previous.authorId ===
+            message.author.id;
+
+
+        console.log(
+            `[game-play] previously seen game: ` +
+            `${hunterResult.title}` +
+            (
+                hunterResult.game_key
+                    ? ` (${hunterResult.game_key})`
+                    : ""
+            ) +
+            `; same poster: ${samePoster}`
+        );
+
+
+        await reactToDuplicateGamePost(
+            message,
+            hunterResult,
+            previous,
+            openai
+        );
+
+
+        return true;
+    }
+
+
+    /*
+     * There can theoretically be an active
+     * game that entered through another path
+     * without being in discovery memory.
+     */
+
+    if (
+        gameAlreadyKnown(
+            scheduledGame
+        )
+    ) {
+        console.log(
+            `[game-play] active duplicate ignored: ` +
+            `${hunterResult.title}`
+        );
+
+        return true;
+    }
+
+
+    /*
+     * Remember it BEFORE the OpenAI call.
+     *
+     * That way if two identical messages arrive
+     * close together, the second one already sees
+     * the first as a duplicate.
+     */
+
+    rememberGame(
+        scheduledGame
     );
 
 
@@ -625,11 +939,7 @@ async function handleKnownGameUrl(
 
 
     scheduleGame(
-        buildScheduledGame(
-            hunterResult,
-            message,
-            "channel-game-post"
-        ),
+        scheduledGame,
         client
     );
 
@@ -652,6 +962,7 @@ async function handleFreeStuffMessage(
         extractComponentText(
             message.components
         );
+
 
     const sourceText =
         message.content ||
@@ -729,12 +1040,51 @@ async function handleFreeStuffMessage(
     );
 
 
-    scheduleGame(
+    const scheduledGame =
         buildScheduledGame(
             hunterResult,
             message,
             "freestuff"
-        ),
+        );
+
+
+    const previous =
+        getSeenGame(
+            scheduledGame
+        );
+
+
+    if (previous) {
+        console.log(
+            `[game-play] FreeStuff previously seen ignored: ` +
+            `${hunterResult.title}`
+        );
+
+        return true;
+    }
+
+
+    if (
+        gameAlreadyKnown(
+            scheduledGame
+        )
+    ) {
+        console.log(
+            `[game-play] FreeStuff active duplicate ignored: ` +
+            `${hunterResult.title}`
+        );
+
+        return true;
+    }
+
+
+    rememberGame(
+        scheduledGame
+    );
+
+
+    scheduleGame(
+        scheduledGame,
         client
     );
 
