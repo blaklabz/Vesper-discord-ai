@@ -350,6 +350,13 @@ function scheduleGame(
     }
 
 
+    /*
+     * Keep this check even though gameRouter
+     * also checks before Vesper reacts.
+     *
+     * This protects the queue from duplicate
+     * callers elsewhere in the bot.
+     */
     if (
         gameAlreadyKnown(
             game
@@ -622,4 +629,5 @@ module.exports = {
     getQueue,
     getScheduledGames,
     getGameKey,
+    gameAlreadyKnown,
 };
