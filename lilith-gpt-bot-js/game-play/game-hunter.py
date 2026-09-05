@@ -90,7 +90,9 @@ def clean_text(value):
 
 def get_hostname(url):
     try:
-        parsed = urllib.parse.urlparse(url)
+        parsed = urllib.parse.urlparse(
+            url
+        )
 
         if parsed.scheme not in (
             "http",
@@ -108,7 +110,9 @@ def get_hostname(url):
 
 
 def is_approved_url(url):
-    hostname = get_hostname(url)
+    hostname = get_hostname(
+        url
+    )
 
     if not hostname:
         return False
@@ -116,14 +120,18 @@ def is_approved_url(url):
     if hostname in APPROVED_DOMAINS:
         return True
 
-    if hostname.endswith(".itch.io"):
+    if hostname.endswith(
+        ".itch.io"
+    ):
         return True
 
     return False
 
 
 def get_source(url):
-    hostname = get_hostname(url)
+    hostname = get_hostname(
+        url
+    )
 
     if hostname == "store.steampowered.com":
         return "steam"
@@ -139,7 +147,9 @@ def get_source(url):
 
     if (
         hostname == "itch.io"
-        or hostname.endswith(".itch.io")
+        or hostname.endswith(
+            ".itch.io"
+        )
     ):
         return "itch"
 
@@ -152,11 +162,15 @@ def get_source(url):
     return "unknown"
 
 
-def build_request(url, accept=None):
+def build_request(
+    url,
+    accept=None,
+):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 "
-            "(compatible; VesperGameHunter/1.0)"
+            "(compatible; "
+            "VesperGameHunter/1.0)"
         ),
     }
 
@@ -185,14 +199,18 @@ def fetch_page(url):
 
         final_url = response.geturl()
 
-        if not is_approved_url(final_url):
+        if not is_approved_url(
+            final_url
+        ):
             raise ValueError(
                 "redirected_to_unapproved_domain"
             )
 
-        content_type = response.headers.get(
-            "Content-Type",
-            "",
+        content_type = (
+            response.headers.get(
+                "Content-Type",
+                "",
+            )
         )
 
         if (
@@ -217,7 +235,8 @@ def fetch_page(url):
 
         return {
             "url": final_url,
-            "content_type": content_type,
+            "content_type":
+                content_type,
             "body": body.decode(
                 charset,
                 errors="replace",
@@ -254,7 +273,9 @@ def fetch_json(url):
         )
 
         try:
-            return json.loads(text)
+            return json.loads(
+                text
+            )
 
         except json.JSONDecodeError:
             raise ValueError(
@@ -265,7 +286,9 @@ def fetch_json(url):
 def parse_game_page(body):
     parser = GamePageParser()
 
-    parser.feed(body)
+    parser.feed(
+        body
+    )
 
     meta = parser.meta
 
@@ -274,41 +297,58 @@ def parse_game_page(body):
             meta.get("og:title")
         )
         or clean_text(
-            meta.get("twitter:title")
+            meta.get(
+                "twitter:title"
+            )
         )
         or parser.get_html_title()
     )
 
     description = (
         clean_text(
-            meta.get("og:description")
+            meta.get(
+                "og:description"
+            )
         )
         or clean_text(
-            meta.get("twitter:description")
+            meta.get(
+                "twitter:description"
+            )
         )
         or clean_text(
-            meta.get("description")
+            meta.get(
+                "description"
+            )
         )
     )
 
     image = (
         clean_text(
-            meta.get("og:image")
+            meta.get(
+                "og:image"
+            )
         )
         or clean_text(
-            meta.get("twitter:image")
+            meta.get(
+                "twitter:image"
+            )
         )
     )
 
     return {
-        "page_title": page_title,
-        "description": description,
-        "image": image,
+        "page_title":
+            page_title,
+        "description":
+            description,
+        "image":
+            image,
     }
 
 
 def clean_page_title(title):
-    title = clean_text(title)
+    title = clean_text(
+        title
+    )
 
     if not title:
         return None
@@ -326,7 +366,9 @@ def clean_page_title(title):
     )
 
     for suffix in suffixes:
-        if title.endswith(suffix):
+        if title.endswith(
+            suffix
+        ):
             title = title[
                 :-len(suffix)
             ].strip()
@@ -334,32 +376,20 @@ def clean_page_title(title):
     return title
 
 
-def choose_title(
-    supplied_title,
-    page_title,
-):
-    supplied_title = clean_text(
-        supplied_title
-    )
-
-    if supplied_title:
-        return supplied_title
-
-    return clean_page_title(
-        page_title
-    )
-
-
 def get_steam_appid(url):
-    hostname = get_hostname(url)
+    hostname = get_hostname(
+        url
+    )
 
     if hostname != "store.steampowered.com":
         return None
 
-    parsed = urllib.parse.urlparse(url)
+    parsed = urllib.parse.urlparse(
+        url
+    )
 
     match = re.search(
-        r"/app/(\d+)",
+        r"/(?:agecheck/)?app/(\d+)",
         parsed.path,
     )
 
@@ -371,6 +401,158 @@ def get_steam_appid(url):
     )
 
 
+def canonicalize_steam_url(url):
+    appid = get_steam_appid(
+        url
+    )
+
+    if not appid:
+        return url
+
+    return (
+        "https://store.steampowered.com/"
+        f"app/{appid}/"
+    )
+
+
+def get_steam_game_key(url):
+    appid = get_steam_appid(
+        url
+    )
+
+    if not appid:
+        return None
+
+    return f"steam:{appid}"
+
+
+def supplied_title_is_bad(
+    title,
+    appid=None,
+):
+    title = clean_text(
+        title
+    )
+
+    if not title:
+        return True
+
+    normalized = title.lower()
+
+    if normalized in (
+        "age check",
+        "steam age check",
+    ):
+        return True
+
+    if title.isdigit():
+        return True
+
+    match = re.fullmatch(
+        r"playing\s+(\d+)",
+        title,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        return True
+
+    if (
+        appid
+        and normalized
+        == str(appid)
+    ):
+        return True
+
+    return False
+
+
+def title_from_steam_slug(url):
+    try:
+        parsed = urllib.parse.urlparse(
+            url
+        )
+
+        match = re.search(
+            r"/app/\d+/([^/]+)",
+            parsed.path,
+        )
+
+        if not match:
+            return None
+
+        slug = urllib.parse.unquote(
+            match.group(1)
+        )
+
+        slug = slug.replace(
+            "_",
+            " ",
+        )
+
+        return clean_text(
+            slug
+        )
+
+    except Exception:
+        return None
+
+
+def choose_title(
+    supplied_title,
+    page_title,
+    source=None,
+    url=None,
+):
+    appid = None
+
+    if source == "steam":
+        appid = get_steam_appid(
+            url
+        )
+
+    supplied_title = clean_text(
+        supplied_title
+    )
+
+    if not supplied_title_is_bad(
+        supplied_title,
+        appid,
+    ):
+        return supplied_title
+
+    cleaned_page_title = (
+        clean_page_title(
+            page_title
+        )
+    )
+
+    if (
+        cleaned_page_title
+        and cleaned_page_title.lower()
+        not in (
+            "age check",
+            "steam age check",
+        )
+    ):
+        return cleaned_page_title
+
+    if source == "steam":
+        slug_title = (
+            title_from_steam_slug(
+                url
+            )
+        )
+
+        if slug_title:
+            return slug_title
+
+    if appid:
+        return str(appid)
+
+    return supplied_title
+
+
 def get_steam_reviews(appid):
     if not appid:
         return None
@@ -380,7 +562,8 @@ def get_steam_reviews(appid):
             "json": 1,
             "filter": "all",
             "language": "all",
-            "purchase_type": "all",
+            "purchase_type":
+                "all",
             "num_per_page": 1,
         }
     )
@@ -392,22 +575,28 @@ def get_steam_reviews(appid):
     )
 
     try:
-        data = fetch_json(url)
+        data = fetch_json(
+            url
+        )
 
     except Exception as error:
         return {
             "available": False,
-            "error": str(error),
+            "error":
+                str(error),
         }
 
     if data.get("success") != 1:
         return {
             "available": False,
-            "error": "steam_review_request_failed",
+            "error":
+                "steam_review_request_failed",
         }
 
     summary = (
-        data.get("query_summary")
+        data.get(
+            "query_summary"
+        )
         or {}
     )
 
@@ -437,7 +626,10 @@ def get_steam_reviews(appid):
 
     if total > 0:
         positive_percent = round(
-            (positive / total) * 100,
+            (
+                positive
+                / total
+            ) * 100,
             1,
         )
     else:
@@ -445,19 +637,24 @@ def get_steam_reviews(appid):
 
     return {
         "available": True,
-        "summary": clean_text(
+        "summary":
+            clean_text(
+                summary.get(
+                    "review_score_desc"
+                )
+            ),
+        "score":
             summary.get(
-                "review_score_desc"
-            )
-        ),
-        "score": summary.get(
-            "review_score"
-        ),
+                "review_score"
+            ),
         "positive_percent":
             positive_percent,
-        "positive": positive,
-        "negative": negative,
-        "total": total,
+        "positive":
+            positive,
+        "negative":
+            negative,
+        "total":
+            total,
     }
 
 
@@ -478,6 +675,12 @@ def build_game_context(
             "appid": appid,
         }
 
+        context["game_key"] = (
+            get_steam_game_key(
+                url
+            )
+        )
+
         context["reviews"] = (
             get_steam_reviews(
                 appid
@@ -490,8 +693,9 @@ def build_game_context(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Gather storefront and review "
-            "information for Vesper."
+            "Gather storefront and "
+            "review information for "
+            "Vesper."
         )
     )
 
@@ -507,10 +711,12 @@ def main():
 
     args = parser.parse_args()
 
-    url = args.url
+    original_url = args.url
     supplied_title = args.title
 
-    if not is_approved_url(url):
+    if not is_approved_url(
+        original_url
+    ):
         print(
             json.dumps(
                 {
@@ -519,7 +725,7 @@ def main():
                     "title":
                         supplied_title,
                     "url":
-                        url,
+                        original_url,
                     "reason":
                         "domain_not_approved",
                 },
@@ -530,7 +736,27 @@ def main():
         return 0
 
     try:
-        page = fetch_page(url)
+        source = get_source(
+            original_url
+        )
+
+        #
+        # Steam age-check URLs and normal
+        # Steam app URLs should represent
+        # the exact same game.
+        #
+        if source == "steam":
+            fetch_url = (
+                canonicalize_steam_url(
+                    original_url
+                )
+            )
+        else:
+            fetch_url = original_url
+
+        page = fetch_page(
+            fetch_url
+        )
 
         source = get_source(
             page["url"]
@@ -540,11 +766,6 @@ def main():
             page["body"]
         )
 
-        title = choose_title(
-            supplied_title,
-            parsed["page_title"],
-        )
-
         game_context = (
             build_game_context(
                 source,
@@ -552,24 +773,69 @@ def main():
             )
         )
 
+        title = choose_title(
+            supplied_title,
+            parsed["page_title"],
+            source=source,
+            url=original_url,
+        )
+
+        if source == "steam":
+            output_url = (
+                canonicalize_steam_url(
+                    page["url"]
+                )
+            )
+        else:
+            output_url = page["url"]
+
         result = {
-            "status": "ok",
-            "source": source,
-            "title": title,
+            "status":
+                "ok",
+
+            "source":
+                source,
+
+            "title":
+                title,
+
             "page_title":
-                parsed["page_title"],
-            "url": page["url"],
+                parsed[
+                    "page_title"
+                ],
+
+            "url":
+                output_url,
+
+            "original_url":
+                original_url,
+
+            "game_key":
+                game_context.get(
+                    "game_key"
+                ),
+
             "description":
-                parsed["description"],
+                parsed[
+                    "description"
+                ],
+
             "image":
-                parsed["image"],
+                parsed[
+                    "image"
+                ],
+
             "reviews":
-                game_context["reviews"],
+                game_context[
+                    "reviews"
+                ],
         }
 
         if "steam" in game_context:
             result["steam"] = (
-                game_context["steam"]
+                game_context[
+                    "steam"
+                ]
             )
 
         print(
@@ -585,10 +851,12 @@ def main():
         print(
             json.dumps(
                 {
-                    "status": "error",
+                    "status":
+                        "error",
                     "title":
                         supplied_title,
-                    "url": url,
+                    "url":
+                        original_url,
                     "error":
                         str(error),
                 },

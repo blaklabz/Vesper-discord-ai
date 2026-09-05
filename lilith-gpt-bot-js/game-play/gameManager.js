@@ -1,10 +1,12 @@
+"use strict";
+
 const {
     ActivityType,
-} = require('discord.js');
+} = require("discord.js");
 
 const {
     shouldQueueGame,
-} = require('./game-decision');
+} = require("./game-decision");
 
 
 const MIN_PLAY_MINUTES = 10;
@@ -15,13 +17,23 @@ const MAX_DISCOVERY_DELAY_MINUTES = 8;
 
 
 const queue = [];
-const scheduledGames = new Map();
+const scheduledGames =
+    new Map();
 
 let currentGame = null;
 let playTimer = null;
 
 
-function randomInteger(min, max) {
+/*
+ * -------------------------------------------------------
+ * RANDOMIZATION
+ * -------------------------------------------------------
+ */
+
+function randomInteger(
+    min,
+    max
+) {
     return (
         Math.floor(
             Math.random() *
@@ -40,7 +52,10 @@ function randomPlayDurationMs() {
 
     return {
         minutes,
-        ms: minutes * 60 * 1000,
+        ms:
+            minutes *
+            60 *
+            1000,
     };
 }
 
@@ -54,29 +69,98 @@ function randomDiscoveryDelayMs() {
 
     return {
         minutes,
-        ms: minutes * 60 * 1000,
+        ms:
+            minutes *
+            60 *
+            1000,
     };
 }
 
 
-function gameAlreadyKnown(game) {
-    if (!game?.url) {
+/*
+ * -------------------------------------------------------
+ * GAME IDENTITY
+ * -------------------------------------------------------
+ */
+
+function getGameKey(
+    game
+) {
+    if (!game) {
+        return null;
+    }
+
+    return (
+        game.game_key ||
+        game.url ||
+        null
+    );
+}
+
+
+function sameGame(
+    first,
+    second
+) {
+    const firstKey =
+        getGameKey(
+            first
+        );
+
+    const secondKey =
+        getGameKey(
+            second
+        );
+
+    if (
+        !firstKey ||
+        !secondKey
+    ) {
         return false;
     }
+
+    return (
+        firstKey ===
+        secondKey
+    );
+}
+
+
+function gameAlreadyKnown(
+    game
+) {
+    const gameKey =
+        getGameKey(
+            game
+        );
+
+    if (!gameKey) {
+        return false;
+    }
+
 
     const alreadyQueued =
         queue.some(
             (item) =>
-                item.url === game.url
+                sameGame(
+                    item,
+                    game
+                )
         );
 
+
     const currentlyPlaying =
-        currentGame?.url === game.url;
+        sameGame(
+            currentGame,
+            game
+        );
+
 
     const alreadyScheduled =
         scheduledGames.has(
-            game.url
+            gameKey
         );
+
 
     return (
         alreadyQueued ||
@@ -86,7 +170,15 @@ function gameAlreadyKnown(game) {
 }
 
 
-function logReviewContext(game) {
+/*
+ * -------------------------------------------------------
+ * REVIEW LOGGING
+ * -------------------------------------------------------
+ */
+
+function logReviewContext(
+    game
+) {
     const reviews =
         game?.reviews;
 
@@ -98,30 +190,34 @@ function logReviewContext(game) {
         return;
     }
 
-    if (!reviews.available) {
+
+    if (
+        !reviews.available
+    ) {
         console.log(
             `[game-play] reviews unavailable: ` +
             `${game.title}` +
             (
                 reviews.error
                     ? ` (${reviews.error})`
-                    : ''
+                    : ""
             )
         );
 
         return;
     }
 
+
     const summary =
-        reviews.summary
-        || 'Unknown';
+        reviews.summary ||
+        "Unknown";
 
     const percent =
         reviews.positive_percent;
 
     const total =
-        reviews.total
-        || 0;
+        reviews.total || 0;
+
 
     console.log(
         `[game-play] reviews: ${game.title} - ` +
@@ -132,8 +228,20 @@ function logReviewContext(game) {
 }
 
 
-function enqueueGame(game) {
-    if (gameAlreadyKnown(game)) {
+/*
+ * -------------------------------------------------------
+ * QUEUE
+ * -------------------------------------------------------
+ */
+
+function enqueueGame(
+    game
+) {
+    if (
+        gameAlreadyKnown(
+            game
+        )
+    ) {
         console.log(
             `[game-play] duplicate ignored: ${game.title}`
         );
@@ -141,27 +249,50 @@ function enqueueGame(game) {
         return false;
     }
 
-    queue.push(game);
+
+    queue.push(
+        game
+    );
+
 
     console.log(
         `[game-play] queued: ${game.title} (${game.url})`
     );
 
+
     return true;
 }
 
 
-function considerGame(game, client) {
+/*
+ * -------------------------------------------------------
+ * DECISION / CONSIDERATION
+ * -------------------------------------------------------
+ */
+
+function considerGame(
+    game,
+    client
+) {
     console.log(
         `[game-play] considering: ${game.title}`
     );
 
-    logReviewContext(game);
+
+    logReviewContext(
+        game
+    );
+
 
     const result =
-        shouldQueueGame(game);
+        shouldQueueGame(
+            game
+        );
 
-    if (!result.shouldQueue) {
+
+    if (
+        !result.shouldQueue
+    ) {
         console.log(
             `[game-play] Vesper refused: ` +
             `${game.title} - ` +
@@ -171,24 +302,59 @@ function considerGame(game, client) {
         return false;
     }
 
+
     console.log(
-        `[game-play] Vesper accepted: ` +
-        `${game.title}`
+        `[game-play] Vesper accepted: ${game.title}`
     );
 
+
     const added =
-        enqueueGame(game);
+        enqueueGame(
+            game
+        );
+
 
     if (added) {
-        startNextGame(client);
+        startNextGame(
+            client
+        );
     }
+
 
     return added;
 }
 
 
-function scheduleGame(game, client) {
-    if (gameAlreadyKnown(game)) {
+/*
+ * -------------------------------------------------------
+ * DISCOVERY SCHEDULING
+ * -------------------------------------------------------
+ */
+
+function scheduleGame(
+    game,
+    client
+) {
+    const gameKey =
+        getGameKey(
+            game
+        );
+
+
+    if (!gameKey) {
+        console.log(
+            `[game-play] game has no usable identity: ${game?.title || "Unknown Game"}`
+        );
+
+        return false;
+    }
+
+
+    if (
+        gameAlreadyKnown(
+            game
+        )
+    ) {
         console.log(
             `[game-play] discovered duplicate ignored: ${game.title}`
         );
@@ -196,19 +362,22 @@ function scheduleGame(game, client) {
         return false;
     }
 
+
     const delay =
         randomDiscoveryDelayMs();
+
 
     console.log(
         `[game-play] discovered: ${game.title}; ` +
         `considering in ${delay.minutes} minute(s)`
     );
 
+
     const timer =
         setTimeout(
             () => {
                 scheduledGames.delete(
-                    game.url
+                    gameKey
                 );
 
                 considerGame(
@@ -219,30 +388,45 @@ function scheduleGame(game, client) {
             delay.ms
         );
 
+
     scheduledGames.set(
-        game.url,
+        gameKey,
         {
             game,
             timer,
-            scheduledAt: Date.now(),
-            delayMinutes: delay.minutes,
+            scheduledAt:
+                Date.now(),
+
+            delayMinutes:
+                delay.minutes,
         }
     );
+
 
     return true;
 }
 
 
+/*
+ * -------------------------------------------------------
+ * GAME SELECTION
+ * -------------------------------------------------------
+ */
+
 function chooseRandomQueuedGame() {
-    if (queue.length === 0) {
+    if (
+        queue.length === 0
+    ) {
         return null;
     }
+
 
     const index =
         Math.floor(
             Math.random() *
             queue.length
         );
+
 
     return queue.splice(
         index,
@@ -251,15 +435,32 @@ function chooseRandomQueuedGame() {
 }
 
 
-function clearPlayingActivity(client) {
+/*
+ * -------------------------------------------------------
+ * DISCORD PRESENCE
+ * -------------------------------------------------------
+ */
+
+function clearPlayingActivity(
+    client
+) {
     client.user.setPresence({
         activities: [],
-        status: 'online',
+        status:
+            "online",
     });
 }
 
 
-function startNextGame(client) {
+/*
+ * -------------------------------------------------------
+ * PLAY LIFECYCLE
+ * -------------------------------------------------------
+ */
+
+function startNextGame(
+    client
+) {
     if (
         currentGame ||
         queue.length === 0
@@ -267,21 +468,30 @@ function startNextGame(client) {
         return;
     }
 
+
     const game =
         chooseRandomQueuedGame();
+
 
     if (!game) {
         return;
     }
 
+
     const duration =
         randomPlayDurationMs();
 
+
     currentGame = {
         ...game,
-        startedAt: Date.now(),
-        playMinutes: duration.minutes,
+
+        startedAt:
+            Date.now(),
+
+        playMinutes:
+            duration.minutes,
     };
+
 
     console.log(
         `[game-play] Vesper started playing: ` +
@@ -289,20 +499,28 @@ function startNextGame(client) {
         `${duration.minutes} minute(s)`
     );
 
+
     client.user.setPresence({
         activities: [
             {
-                name: currentGame.title,
-                type: ActivityType.Playing,
+                name:
+                    currentGame.title,
+
+                type:
+                    ActivityType.Playing,
             },
         ],
-        status: 'online',
+
+        status:
+            "online",
     });
 
+
     console.log(
-        '[game-play] presence:',
+        "[game-play] presence:",
         client.user.presence.activities
     );
+
 
     playTimer =
         setTimeout(
@@ -316,17 +534,22 @@ function startNextGame(client) {
 }
 
 
-function finishCurrentGame(client) {
+function finishCurrentGame(
+    client
+) {
     if (!currentGame) {
         return;
     }
+
 
     console.log(
         `[game-play] Vesper finished playing: ` +
         `${currentGame.title}`
     );
 
+
     currentGame = null;
+
 
     if (playTimer) {
         clearTimeout(
@@ -336,19 +559,28 @@ function finishCurrentGame(client) {
         playTimer = null;
     }
 
+
     clearPlayingActivity(
         client
     );
 
+
     console.log(
-        '[game-play] cleared playing activity'
+        "[game-play] cleared playing activity"
     );
+
 
     startNextGame(
         client
     );
 }
 
+
+/*
+ * -------------------------------------------------------
+ * STATE
+ * -------------------------------------------------------
+ */
 
 function getCurrentGame() {
     return currentGame;
@@ -357,7 +589,7 @@ function getCurrentGame() {
 
 function getQueue() {
     return [
-        ...queue
+        ...queue,
     ];
 }
 
@@ -389,4 +621,5 @@ module.exports = {
     getCurrentGame,
     getQueue,
     getScheduledGames,
+    getGameKey,
 };
