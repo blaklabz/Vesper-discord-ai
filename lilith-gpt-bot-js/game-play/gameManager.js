@@ -8,6 +8,13 @@ const {
     shouldQueueGame,
 } = require("./game-decision");
 
+const {
+    recordDecision,
+    recordQueued,
+    recordPlayStarted,
+    recordPlayFinished,
+} = require("./gameDatabase");
+
 
 const MIN_PLAY_MINUTES = 10;
 const MAX_PLAY_MINUTES = 60;
@@ -17,8 +24,10 @@ const MAX_DISCOVERY_DELAY_MINUTES = 8;
 
 
 const queue = [];
+
 const scheduledGames =
     new Map();
+
 
 let currentGame = null;
 let playTimer = null;
@@ -50,8 +59,10 @@ function randomPlayDurationMs() {
             MAX_PLAY_MINUTES
         );
 
+
     return {
         minutes,
+
         ms:
             minutes *
             60 *
@@ -67,8 +78,10 @@ function randomDiscoveryDelayMs() {
             MAX_DISCOVERY_DELAY_MINUTES
         );
 
+
     return {
         minutes,
+
         ms:
             minutes *
             60 *
@@ -90,6 +103,7 @@ function getGameKey(
         return null;
     }
 
+
     return (
         game.game_key ||
         game.url ||
@@ -107,10 +121,12 @@ function sameGame(
             first
         );
 
+
     const secondKey =
         getGameKey(
             second
         );
+
 
     if (
         !firstKey ||
@@ -118,6 +134,7 @@ function sameGame(
     ) {
         return false;
     }
+
 
     return (
         firstKey ===
@@ -133,6 +150,7 @@ function gameAlreadyKnown(
         getGameKey(
             game
         );
+
 
     if (!gameKey) {
         return false;
@@ -182,6 +200,7 @@ function logReviewContext(
     const reviews =
         game?.reviews;
 
+
     if (!reviews) {
         console.log(
             `[game-play] reviews unavailable: ${game.title}`
@@ -212,11 +231,14 @@ function logReviewContext(
         reviews.summary ||
         "Unknown";
 
+
     const percent =
         reviews.positive_percent;
 
+
     const total =
-        reviews.total || 0;
+        reviews.total ||
+        0;
 
 
     console.log(
@@ -246,11 +268,17 @@ function enqueueGame(
             `[game-play] duplicate ignored: ${game.title}`
         );
 
+
         return false;
     }
 
 
     queue.push(
+        game
+    );
+
+
+    recordQueued(
         game
     );
 
@@ -290,6 +318,12 @@ function considerGame(
         );
 
 
+    recordDecision(
+        game,
+        result.decision
+    );
+
+
     if (
         !result.shouldQueue
     ) {
@@ -298,6 +332,7 @@ function considerGame(
             `${game.title} - ` +
             `${result.decision.reason}`
         );
+
 
         return false;
     }
@@ -346,17 +381,11 @@ function scheduleGame(
             `[game-play] game has no usable identity: ${game?.title || "Unknown Game"}`
         );
 
+
         return false;
     }
 
 
-    /*
-     * Keep this check even though gameRouter
-     * also checks before Vesper reacts.
-     *
-     * This protects the queue from duplicate
-     * callers elsewhere in the bot.
-     */
     if (
         gameAlreadyKnown(
             game
@@ -365,6 +394,7 @@ function scheduleGame(
         console.log(
             `[game-play] discovered duplicate ignored: ${game.title}`
         );
+
 
         return false;
     }
@@ -387,11 +417,13 @@ function scheduleGame(
                     gameKey
                 );
 
+
                 considerGame(
                     game,
                     client
                 );
             },
+
             delay.ms
         );
 
@@ -400,7 +432,9 @@ function scheduleGame(
         gameKey,
         {
             game,
+
             timer,
+
             scheduledAt:
                 Date.now(),
 
@@ -453,6 +487,7 @@ function clearPlayingActivity(
 ) {
     client.user.setPresence({
         activities: [],
+
         status:
             "online",
     });
@@ -500,6 +535,11 @@ function startNextGame(
     };
 
 
+    recordPlayStarted(
+        currentGame
+    );
+
+
     console.log(
         `[game-play] Vesper started playing: ` +
         `${currentGame.title} for ` +
@@ -536,6 +576,7 @@ function startNextGame(
                     client
                 );
             },
+
             duration.ms
         );
 }
@@ -549,9 +590,18 @@ function finishCurrentGame(
     }
 
 
+    const finishedGame =
+        currentGame;
+
+
     console.log(
         `[game-play] Vesper finished playing: ` +
-        `${currentGame.title}`
+        `${finishedGame.title}`
+    );
+
+
+    recordPlayFinished(
+        finishedGame
     );
 
 
@@ -562,6 +612,7 @@ function finishCurrentGame(
         clearTimeout(
             playTimer
         );
+
 
         playTimer = null;
     }
@@ -623,11 +674,14 @@ module.exports = {
     enqueueGame,
     scheduleGame,
     considerGame,
+
     startNextGame,
     finishCurrentGame,
+
     getCurrentGame,
     getQueue,
     getScheduledGames,
+
     getGameKey,
     gameAlreadyKnown,
 };

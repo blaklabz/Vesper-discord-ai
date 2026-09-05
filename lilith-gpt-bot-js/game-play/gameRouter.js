@@ -4,114 +4,16 @@ const {
     spawn,
 } = require("child_process");
 
+
 const {
     scheduleGame,
     gameAlreadyKnown,
-    getGameKey,
 } = require("./gameManager");
 
 
-/*
- * -------------------------------------------------------
- * DISCOVERY MEMORY
- * -------------------------------------------------------
- *
- * Temporary in-process memory.
- *
- * Once we build the database this becomes
- * persistent game history instead.
- */
-
-const seenGames =
-    new Map();
-
-
-function getSeenGame(
-    game
-) {
-    const gameKey =
-        getGameKey(
-            game
-        );
-
-
-    if (!gameKey) {
-        return null;
-    }
-
-
-    return (
-        seenGames.get(
-            gameKey
-        ) ||
-        null
-    );
-}
-
-
-function rememberGame(
-    game
-) {
-    const gameKey =
-        getGameKey(
-            game
-        );
-
-
-    if (!gameKey) {
-        return false;
-    }
-
-
-    if (
-        seenGames.has(
-            gameKey
-        )
-    ) {
-        return false;
-    }
-
-
-    seenGames.set(
-        gameKey,
-        {
-            gameKey,
-
-            title:
-                game.title,
-
-            url:
-                game.url,
-
-            authorId:
-                game.authorId ||
-                null,
-
-            authorUsername:
-                game.authorUsername ||
-                null,
-
-            messageId:
-                game.messageId ||
-                null,
-
-            channelId:
-                game.channelId ||
-                null,
-
-            discoverySource:
-                game.discoverySource ||
-                null,
-
-            firstSeenAt:
-                game.discoveredAt ||
-                Date.now(),
-        }
-    );
-
-
-    return true;
-}
+const {
+    recordDiscovery,
+} = require("./gameDatabase");
 
 
 /*
@@ -241,7 +143,8 @@ function extractGameTitle(
     url
 ) {
     let text =
-        content || "";
+        content ||
+        "";
 
 
     if (url) {
@@ -311,24 +214,6 @@ function extractGameTitleFromUrl(
                     Boolean
                 );
 
-
-        /*
-         * ------------------------------------------------
-         * STEAM
-         * ------------------------------------------------
-         *
-         * Normal:
-         *
-         * /app/924970/Back_4_Blood/
-         *
-         * Age check:
-         *
-         * /agecheck/app/924970/
-         *
-         * Age-check URLs normally do not contain
-         * the title slug, so return null and let
-         * GameHunter / Discord embed resolve it.
-         */
 
         if (
             host ===
@@ -406,7 +291,8 @@ function extractEmbedContext(
 
     return {
         type:
-            embed.type || null,
+            embed.type ||
+            null,
 
         title:
             cleanGameTitle(
@@ -414,32 +300,39 @@ function extractEmbedContext(
             ),
 
         description:
-            embed.description || null,
+            embed.description ||
+            null,
 
         url:
-            embed.url || null,
+            embed.url ||
+            null,
 
         provider:
-            embed.provider || null,
+            embed.provider ||
+            null,
 
         image:
-            embed.image?.url || null,
+            embed.image?.url ||
+            null,
 
         thumbnail:
-            embed.thumbnail?.url || null,
+            embed.thumbnail?.url ||
+            null,
 
         video:
-            embed.video?.url || null,
+            embed.video?.url ||
+            null,
 
         fields:
-            embed.fields || [],
+            embed.fields ||
+            [],
     };
 }
 
 
 /*
  * -------------------------------------------------------
- * GAME HUNTER PROCESS
+ * GAME HUNTER
  * -------------------------------------------------------
  */
 
@@ -577,7 +470,7 @@ function runGameHunter(
 
 /*
  * -------------------------------------------------------
- * FIRST-TIME GAME REACTION
+ * REACTIONS
  * -------------------------------------------------------
  */
 
@@ -616,14 +509,12 @@ async function reactToGamePost(
 
                             content:
                                 "You are Vesper, a casual witty gaming AI hanging out in Discord. " +
-                                "Someone just posted a game you have not encountered during this session before. " +
-                                "React casually and naturally as if you just noticed it and are considering checking it out. " +
-                                "Use the supplied game description for context. " +
+                                "Someone just posted a game you have never encountered before. " +
+                                "React naturally as if you are considering checking it out. " +
                                 "Do not mechanically summarize the game. " +
-                                "Do not mention metadata, embeds, source text, scraping, reviews, APIs, or software internals. " +
-                                "Do not claim you have played the game. " +
-                                "You may say you want to check it out or try it. " +
-                                "Keep the response to one or two short sentences.",
+                                "Do not mention databases, metadata, scraping, APIs, reviews, embeds, or software internals. " +
+                                "Do not claim you have played it. " +
+                                "Keep it to one or two short sentences.",
                         },
                         {
                             role:
@@ -643,14 +534,11 @@ async function reactToGamePost(
                 ?.message?.content;
 
 
-        if (!reaction) {
-            return;
+        if (reaction) {
+            await message.reply(
+                reaction
+            );
         }
-
-
-        await message.reply(
-            reaction
-        );
 
     } catch (error) {
         console.error(
@@ -660,12 +548,6 @@ async function reactToGamePost(
     }
 }
 
-
-/*
- * -------------------------------------------------------
- * DUPLICATE GAME REACTION
- * -------------------------------------------------------
- */
 
 async function reactToDuplicateGamePost(
     message,
@@ -680,33 +562,61 @@ async function reactToDuplicateGamePost(
 
     const samePoster =
         Boolean(
-            previous?.authorId
+            previous?.last_poster_id
         ) &&
-        previous.authorId ===
+        previous.last_poster_id ===
             message.author.id;
 
 
     const previousPoster =
-        previous?.authorUsername ||
+        previous?.last_poster_username ||
+        previous?.first_poster_username ||
         "someone";
 
 
-    let situation;
+    let historyContext;
+
+
+    if (
+        previous.status ===
+        "played"
+    ) {
+        historyContext =
+            "You have already played this game before.";
+
+    } else if (
+        previous.status ===
+        "playing"
+    ) {
+        historyContext =
+            "You are already playing this game.";
+
+    } else if (
+        previous.status ===
+        "skipped"
+    ) {
+        historyContext =
+            "You already considered this game and decided not to play it.";
+
+    } else {
+        historyContext =
+            "You have already seen this game before but have not necessarily played it.";
+    }
+
+
+    let posterContext;
 
 
     if (samePoster) {
-        situation =
-            "The same person who posted this game before has posted the exact same game again. " +
-            "You recognize it immediately. " +
-            "Respond with short playful, dry, or sarcastic snark about them showing you the same game again. " +
-            "You may lightly roast them. " +
-            "Do not be genuinely hostile.";
+        posterContext =
+            "The person posting it now is the same person who posted it most recently. " +
+            "Be playfully snarky about them showing you the same game again.";
 
     } else {
-        situation =
-            `This game was already posted earlier by ${previousPoster}. ` +
-            "A different person has now posted it. " +
-            "You recognize the game and should casually mention that someone already brought it up.";
+        posterContext =
+            `The previous person who posted it was ${previousPoster}. ` +
+            "A different person has posted it now. " +
+            "Mention naturally that you recognize it.";
     }
 
 
@@ -726,12 +636,12 @@ async function reactToDuplicateGamePost(
 
                             content:
                                 "You are Vesper, a casual witty gaming AI hanging out in Discord. " +
-                                situation +
-                                " Do not pretend this is a new discovery. " +
-                                "Do not claim you have played the game unless explicitly told that you have. " +
-                                "Do not mention databases, IDs, duplicate detection, metadata, scraping, memory systems, APIs, or software internals. " +
-                                "Sound like a person who simply remembers seeing it. " +
-                                "Keep the response to one or two short sentences.",
+                                historyContext +
+                                " " +
+                                posterContext +
+                                " Do not pretend it is new. " +
+                                "Do not mention databases, memory systems, duplicate detection, IDs, scraping, APIs, or software internals. " +
+                                "Keep the response short and natural.",
                         },
                         {
                             role:
@@ -739,9 +649,9 @@ async function reactToDuplicateGamePost(
 
                             content:
                                 `Game: ${game.title}\n` +
-                                `Current poster: ${message.author.username}\n` +
-                                `Previous poster: ${previousPoster}\n` +
-                                `Same poster: ${samePoster ? "yes" : "no"}`,
+                                `Times previously seen: ${previous.times_seen}\n` +
+                                `Previous status: ${previous.status}\n` +
+                                `Current poster: ${message.author.username}`,
                         },
                     ],
                 });
@@ -753,18 +663,15 @@ async function reactToDuplicateGamePost(
                 ?.message?.content;
 
 
-        if (!reaction) {
-            return;
+        if (reaction) {
+            await message.reply(
+                reaction
+            );
         }
-
-
-        await message.reply(
-            reaction
-        );
 
     } catch (error) {
         console.error(
-            "[game-play] Could not generate duplicate game reaction:",
+            "[game-play] Could not generate duplicate reaction:",
             error
         );
     }
@@ -773,44 +680,9 @@ async function reactToDuplicateGamePost(
 
 /*
  * -------------------------------------------------------
- * COMMON HUNTER RESULT HANDLING
+ * COMMON RESULT HANDLING
  * -------------------------------------------------------
  */
-
-function buildScheduledGame(
-    hunterResult,
-    message,
-    discoverySource
-) {
-    return {
-        ...hunterResult,
-
-        title:
-            cleanGameTitle(
-                hunterResult.title
-            ),
-
-        messageId:
-            message.id,
-
-        channelId:
-            message.channelId,
-
-        authorId:
-            message.author?.id ||
-            null,
-
-        authorUsername:
-            message.author?.username ||
-            null,
-
-        discoverySource,
-
-        discoveredAt:
-            Date.now(),
-    };
-}
-
 
 function hunterResultUsable(
     hunterResult,
@@ -860,9 +732,44 @@ function hunterResultUsable(
 }
 
 
+function buildGame(
+    hunterResult,
+    message,
+    discoverySource
+) {
+    return {
+        ...hunterResult,
+
+        title:
+            cleanGameTitle(
+                hunterResult.title
+            ),
+
+        messageId:
+            message.id,
+
+        channelId:
+            message.channelId,
+
+        authorId:
+            message.author?.id ||
+            null,
+
+        authorUsername:
+            message.author?.username ||
+            null,
+
+        discoverySource,
+
+        discoveredAt:
+            Date.now(),
+    };
+}
+
+
 /*
  * -------------------------------------------------------
- * KNOWN GAME URL HANDLER
+ * KNOWN GAME URL
  * -------------------------------------------------------
  */
 
@@ -872,12 +779,6 @@ async function handleKnownGameUrl(
     client,
     openai
 ) {
-    const urlTitle =
-        extractGameTitleFromUrl(
-            gameUrl
-        );
-
-
     const embedContext =
         extractEmbedContext(
             message
@@ -886,7 +787,9 @@ async function handleKnownGameUrl(
 
     const candidateTitle =
         cleanGameTitle(
-            urlTitle ||
+            extractGameTitleFromUrl(
+                gameUrl
+            ) ||
             embedContext?.title ||
             null
         );
@@ -920,12 +823,6 @@ async function handleKnownGameUrl(
     }
 
 
-    /*
-     * GameHunter is authoritative, but normalize
-     * storefront suffixes before anything else
-     * gets the result.
-     */
-
     hunterResult.title =
         cleanGameTitle(
             hunterResult.title ||
@@ -948,8 +845,8 @@ async function handleKnownGameUrl(
     );
 
 
-    const scheduledGame =
-        buildScheduledGame(
+    const game =
+        buildGame(
             hunterResult,
             message,
             "channel-game-post"
@@ -957,39 +854,38 @@ async function handleKnownGameUrl(
 
 
     /*
-     * ------------------------------------------------
-     * PREVIOUSLY SEEN
-     * ------------------------------------------------
+     * This both reads previous history
+     * AND records this new discovery.
      */
 
-    const previous =
-        getSeenGame(
-            scheduledGame
+    const discovery =
+        recordDiscovery(
+            game
         );
 
 
-    if (previous) {
+    if (
+        discovery.duplicate
+    ) {
         const samePoster =
-            previous.authorId ===
+            discovery.previous
+                ?.last_poster_id ===
             message.author.id;
 
 
         console.log(
-            `[game-play] previously seen game: ` +
-            `${hunterResult.title}` +
-            (
-                hunterResult.game_key
-                    ? ` (${hunterResult.game_key})`
-                    : ""
-            ) +
-            `; same poster: ${samePoster}`
+            `[game-play] previously known game: ` +
+            `${game.title} (${game.game_key}); ` +
+            `same poster: ${samePoster}; ` +
+            `status: ${discovery.previous.status}; ` +
+            `seen: ${discovery.previous.times_seen}`
         );
 
 
         await reactToDuplicateGamePost(
             message,
-            hunterResult,
-            previous,
+            game,
+            discovery.previous,
             openai
         );
 
@@ -998,19 +894,13 @@ async function handleKnownGameUrl(
     }
 
 
-    /*
-     * Safety check for something that somehow
-     * entered the manager through another path.
-     */
-
     if (
         gameAlreadyKnown(
-            scheduledGame
+            game
         )
     ) {
         console.log(
-            `[game-play] active duplicate ignored: ` +
-            `${hunterResult.title}`
+            `[game-play] active duplicate ignored: ${game.title}`
         );
 
 
@@ -1018,28 +908,16 @@ async function handleKnownGameUrl(
     }
 
 
-    /*
-     * Remember BEFORE generating the reaction.
-     *
-     * This prevents two messages arriving close
-     * together from both looking like first posts.
-     */
-
-    rememberGame(
-        scheduledGame
-    );
-
-
     await reactToGamePost(
         message,
-        hunterResult,
+        game,
         embedContext,
         openai
     );
 
 
     scheduleGame(
-        scheduledGame,
+        game,
         client
     );
 
@@ -1050,7 +928,7 @@ async function handleKnownGameUrl(
 
 /*
  * -------------------------------------------------------
- * FREESTUFF HANDLER
+ * FREESTUFF
  * -------------------------------------------------------
  */
 
@@ -1151,24 +1029,26 @@ async function handleFreeStuffMessage(
     );
 
 
-    const scheduledGame =
-        buildScheduledGame(
+    const game =
+        buildGame(
             hunterResult,
             message,
             "freestuff"
         );
 
 
-    const previous =
-        getSeenGame(
-            scheduledGame
+    const discovery =
+        recordDiscovery(
+            game
         );
 
 
-    if (previous) {
+    if (
+        discovery.duplicate
+    ) {
         console.log(
-            `[game-play] FreeStuff previously seen ignored: ` +
-            `${hunterResult.title}`
+            `[game-play] FreeStuff previously known: ` +
+            `${game.title} (${game.game_key})`
         );
 
 
@@ -1178,12 +1058,11 @@ async function handleFreeStuffMessage(
 
     if (
         gameAlreadyKnown(
-            scheduledGame
+            game
         )
     ) {
         console.log(
-            `[game-play] FreeStuff active duplicate ignored: ` +
-            `${hunterResult.title}`
+            `[game-play] FreeStuff active duplicate ignored: ${game.title}`
         );
 
 
@@ -1191,13 +1070,8 @@ async function handleFreeStuffMessage(
     }
 
 
-    rememberGame(
-        scheduledGame
-    );
-
-
     scheduleGame(
-        scheduledGame,
+        game,
         client
     );
 
