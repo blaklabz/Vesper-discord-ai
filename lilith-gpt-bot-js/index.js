@@ -688,6 +688,94 @@ function debugMessageRouting(
 
 /*
  * -------------------------------------------------------
+ * DISCORD MENTION NORMALIZATION
+ * -------------------------------------------------------
+ */
+
+function normalizeDiscordMentions(
+    message
+) {
+    if (!message.content) {
+        return "";
+    }
+
+
+    let text =
+        message.content;
+
+
+    /*
+     * Discord stores mentions in message.content as:
+     *
+     * <@123456789>
+     * <@!123456789>
+     *
+     * Translate those into human-readable usernames
+     * before sending the conversation to the model.
+     */
+
+    text =
+        text.replace(
+            /<@!?(\d+)>/g,
+            (
+                match,
+                userId
+            ) => {
+                const user =
+                    message.mentions.users.get(
+                        userId
+                    );
+
+
+                /*
+                 * If Discord did not resolve the user,
+                 * leave the original text alone rather
+                 * than guessing.
+                 */
+
+                if (!user) {
+                    return match;
+                }
+
+
+                /*
+                 * Vesper does not need to see her own
+                 * Discord mention in the prompt.
+                 */
+
+                if (
+                    client.user &&
+                    userId ===
+                        client.user.id
+                ) {
+                    return "";
+                }
+
+
+                return `@${user.username}`;
+            }
+        );
+
+
+    /*
+     * People also address Vesper by typing her name.
+     * Remove that addressing token before sending the
+     * actual conversational content to the model.
+     */
+
+    text =
+        text.replace(
+            /\bvesper\b[:,]?\s*/gi,
+            ""
+        );
+
+
+    return text.trim();
+}
+
+
+/*
+ * -------------------------------------------------------
  * OPENAI USER CONTENT
  * -------------------------------------------------------
  */
@@ -696,8 +784,9 @@ function buildUserContent(
     message
 ) {
     const text =
-        message.content
-            ?.trim() || "";
+        normalizeDiscordMentions(
+            message
+        );
 
 
     const imageUrls =
@@ -1018,6 +1107,14 @@ client.on(
         }
 
 
+        /*
+         * This cleaned version is retained for command
+         * parsing such as "Vesper testgame Quake".
+         *
+         * Normal AI conversation uses
+         * normalizeDiscordMentions() instead.
+         */
+
         const cleanedContent =
             message.content
                 .replace(
@@ -1293,6 +1390,13 @@ client.on(
                     msg.author.id ===
                     client.user.id
                 ) {
+                    /*
+                     * Normalize Vesper's previous responses
+                     * too. This prevents old raw Discord
+                     * mention IDs from being fed back into
+                     * future model context.
+                     */
+
                     conversation.push({
                         role:
                             "assistant",
@@ -1301,7 +1405,9 @@ client.on(
                             username,
 
                         content:
-                            msg.content,
+                            normalizeDiscordMentions(
+                                msg
+                            ),
                     });
 
                 } else {
