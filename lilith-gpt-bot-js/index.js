@@ -1226,6 +1226,18 @@ client.on(
                 client.user.id
             );
 
+        console.log(
+            "[mentions-debug]",
+            {
+                content: message.content,
+                botId: client.user.id,
+                mentionedBot,
+                mentionedUsers: [
+                    ...message.mentions.users.keys(),
+                ],
+            }
+        );
+
 
         const replyingToVesper =
             await isReplyToVesper(
