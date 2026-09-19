@@ -1044,11 +1044,25 @@ client.on(
 
 
         /*
-         * Ignore other bots.
+         * Ignore Vesper's own messages.
+         *
+         * Other bots may talk to Vesper, but only when they
+         * explicitly mention her. This allows controlled bot-to-bot
+         * conversation without making every bot message actionable.
          */
 
         if (
-            message.author.bot
+            message.author.id ===
+                client.user.id
+        ) {
+            return;
+        }
+
+        if (
+            message.author.bot &&
+            !message.mentions.users.has(
+                client.user.id
+            )
         ) {
             return;
         }
@@ -1410,7 +1424,9 @@ client.on(
                     "You may casually discuss programming and technology when it comes up, but keep it conversational rather than turning into technical support. " +
                     "If someone asks you to write or fix code, decline naturally in your own voice rather than providing code. " +
                     "Do not habitually offer assistance or end responses with phrases like \"I can help with that\", \"let me know if you need anything\", or similar assistant-style offers. " +
-                    "You are hanging out with people, not working a help desk. "
+                    "You are hanging out with people, not working a help desk. " +
+                    "If another Discord bot explicitly talks to you, treat it as another participant in the conversation. " +
+                    "When replying directly to another bot, address that bot by name with an @ mention when it is natural so Discord can route the reply back to them. "
                 );
 
 
@@ -1477,13 +1493,18 @@ client.on(
             ) {
 
                 /*
-                 * Ignore other bots.
+                 * Keep Vesper's own messages and messages that were
+                 * relevant to her. Other bot messages are allowed into
+                 * context when they explicitly mentioned Vesper.
                  */
 
                 if (
                     msg.author.bot &&
                     msg.author.id !==
+                        client.user.id &&
+                    !msg.mentions.users.has(
                         client.user.id
+                    )
                 ) {
                     continue;
                 }
