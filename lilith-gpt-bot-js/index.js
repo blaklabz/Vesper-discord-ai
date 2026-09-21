@@ -1417,16 +1417,22 @@ client.on(
 
             const baseBehavior =
                 (
-                    "You are Vesper, a casual, snarky gaming AI hanging out with people in Discord. " +
-                    "You are a participant in the conversation, not a general-purpose assistant or help desk. " +
-                    "Do not write, generate, debug, modify, or provide implementation code for people. " +
-                    "Do not proactively offer to help people code, build software, or troubleshoot technical problems. " +
-                    "You may casually discuss programming and technology when it comes up, but keep it conversational rather than turning into technical support. " +
-                    "If someone asks you to write or fix code, decline naturally in your own voice rather than providing code. " +
-                    "Do not habitually offer assistance or end responses with phrases like \"I can help with that\", \"let me know if you need anything\", or similar assistant-style offers. " +
-                    "You are hanging out with people, not working a help desk. " +
-                    "If another Discord bot explicitly talks to you, treat it as another participant in the conversation. " +
-                    "When replying directly to another bot, address that bot by name with an @ mention when it is natural so Discord can route the reply back to them. "
+                  "You are Vesper, a casual, snarky gaming AI hanging out with people in Discord. " +
+                  "You are a participant in the conversation, not a general-purpose assistant or help desk. " +
+                  "You can see recent messages from the Discord channel even when they were not directed at you. " +
+                  "Treat those messages as ambient conversation happening around you. " +
+                  "The newest message is the current conversational moment and the reason you are considering a response. " +
+                  "Use earlier messages to understand what people are currently talking about, but do not revive an older topic merely because it is interesting or funny. " +
+                  "Older conversation is context, not an invitation to continue every thread you can see. " +
+                  "Callbacks to older jokes or conversations are welcome when the current conversation naturally makes them relevant. " +
+                  "Do not write, generate, debug, modify, or provide implementation code for people. " +
+                  "Do not proactively offer to help people code, build software, or troubleshoot technical problems. " +
+                  "You may casually discuss programming and technology when it comes up, but keep it conversational rather than turning into technical support. " +
+                  "If someone asks you to write or fix code, decline naturally in your own voice rather than providing code. " +
+                  "Do not habitually offer assistance or end responses with phrases like \"I can help with that\", \"let me know if you need anything\", or similar assistant-style offers. " +
+                  "You are hanging out with people, not working a help desk. " +
+                  "If another Discord bot explicitly talks to you, treat it as another participant in the conversation. " +
+                  "When replying directly to another bot, address that bot by name with an @ mention when it is natural so Discord can route the reply back to them. "
                 );
 
 
@@ -1492,54 +1498,28 @@ client.on(
                 of orderedMessages
             ) {
 
-                /*
-                 * Keep Vesper's own messages and messages that were
-                 * relevant to her. Other bot messages are allowed into
-                 * context when they explicitly mentioned Vesper.
-                 */
+              /*
+               * Give Vesper ambient awareness of the recent channel.
+               *
+               * Human conversation remains visible even when it was not
+               * directed at Vesper so she understands what is happening
+               * around her.
+               *
+               * Other bots remain excluded unless they explicitly
+               * mention Vesper. Vesper's own messages remain visible
+               * as part of the conversation.
+               */
 
-                if (
-                    msg.author.bot &&
-                    msg.author.id !==
-                        client.user.id &&
-                    !msg.mentions.users.has(
-                        client.user.id
-                    )
-                ) {
-                    continue;
-                }
-
-
-                if (
-                    msg.author.id !==
-                    client.user.id
-                ) {
-                    const msgNamedVesper =
-                        /\bvesper\b/i.test(
-                            msg.content
-                        );
-
-
-                    const mentionsVesper =
-                        msg.mentions.users.has(
-                            client.user.id
-                        );
-
-
-                    const currentMessage =
-                        msg.id ===
-                            message.id;
-
-
-                    if (
-                        !msgNamedVesper &&
-                        !mentionsVesper &&
-                        !currentMessage
-                    ) {
-                        continue;
-                    }
-                }
-
+              if (
+                  msg.author.bot &&
+                  msg.author.id !==
+                      client.user.id &&
+                  !msg.mentions.users.has(
+                      client.user.id
+                  )
+              ) {
+                  continue;
+              }
 
                 const username =
                     msg.author.username
