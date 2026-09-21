@@ -751,20 +751,31 @@ async function resolveOutboundMentions(
     }
 
 
-    try {
-        await guild.members.fetch();
+    /*
+     * Most responses do not contain an outbound mention.
+     * Avoid doing any member-resolution work unless there
+     * is actually something that could be a mention.
+     */
 
-    } catch (error) {
-        console.error(
-            "[mentions] Could not fetch guild members:",
-            error.message
-        );
+    if (
+        !text.includes("@")
+    ) {
+        return text;
     }
 
 
     let resolvedText =
         text;
 
+
+    /*
+     * Use Discord.js's existing guild-member cache.
+     *
+     * Do NOT call guild.members.fetch() here. A fetch with
+     * no member ID requests the guild member list through
+     * Discord Gateway opcode 8 and can be rate limited when
+     * this function runs repeatedly.
+     */
 
     const members =
         [
@@ -842,6 +853,12 @@ async function resolveOutboundMentions(
         }
     }
 
+
+    /*
+     * Match longer names first so a shorter username does
+     * not accidentally consume part of a longer display
+     * name.
+     */
 
     candidates.sort(
         (
