@@ -1519,25 +1519,16 @@ client.on(
               /*
                * Give Vesper ambient awareness of the recent channel.
                *
-               * Human conversation remains visible even when it was not
-               * directed at Vesper so she understands what is happening
-               * around her.
+               * Human messages, Vesper's own messages, and messages from
+               * other bots are included so Vesper understands the full
+               * conversation happening around her.
                *
-               * Other bots remain excluded unless they explicitly
-               * mention Vesper. Vesper's own messages remain visible
-               * as part of the conversation.
+               * Bot messages do not automatically trigger Vesper. The
+               * MessageCreate routing rules above still require another
+               * bot to explicitly mention Vesper before Vesper responds.
                */
 
-              if (
-                  msg.author.bot &&
-                  msg.author.id !==
-                      client.user.id &&
-                  !msg.mentions.users.has(
-                      client.user.id
-                  )
-              ) {
-                  continue;
-              }
+
 
                 const username =
                     msg.author.username
