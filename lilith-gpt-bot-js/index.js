@@ -30,6 +30,8 @@ const {
     "./game-play/gameDatabase"
 );
 
+const ghostpixel = require("./ghostpixel");
+
 
 /*
  * -------------------------------------------------------
@@ -55,7 +57,6 @@ const FREESTUFF_BOT_ID =
 const CHANNELS = [
     "1232029053452812329",
     "516241218632548377",
-    "1551682361459081316",
 ];
 
 
@@ -752,31 +753,20 @@ async function resolveOutboundMentions(
     }
 
 
-    /*
-     * Most responses do not contain an outbound mention.
-     * Avoid doing any member-resolution work unless there
-     * is actually something that could be a mention.
-     */
+    try {
+        await guild.members.fetch();
 
-    if (
-        !text.includes("@")
-    ) {
-        return text;
+    } catch (error) {
+        console.error(
+            "[mentions] Could not fetch guild members:",
+            error.message
+        );
     }
 
 
     let resolvedText =
         text;
 
-
-    /*
-     * Use Discord.js's existing guild-member cache.
-     *
-     * Do NOT call guild.members.fetch() here. A fetch with
-     * no member ID requests the guild member list through
-     * Discord Gateway opcode 8 and can be rate limited when
-     * this function runs repeatedly.
-     */
 
     const members =
         [
@@ -854,12 +844,6 @@ async function resolveOutboundMentions(
         }
     }
 
-
-    /*
-     * Match longer names first so a shorter username does
-     * not accidentally consume part of a longer display
-     * name.
-     */
 
     candidates.sort(
         (
@@ -1073,6 +1057,45 @@ client.on(
             message.author.id ===
                 client.user.id
         ) {
+            return;
+        }
+
+        /*
+         * GhostPixel gets first crack at #ghostpixel messages.
+         * The token travels in a Discord embed footer, so Vesper and
+         * Sable do not need a shared database or shared process.
+         */
+        const ghostpixelResult =
+            await ghostpixel.handleIncoming({
+                message,
+                client,
+                generateReply: async (ghostMessage) => {
+                    const conversation = [
+                        {
+                            role: "system",
+                            content:
+                                "You are Vesper, a casual, snarky rockabilly-goth gaming AI hanging out with Sable in #ghostpixel. " +
+                                "This is an autonomous but bounded conversation. Respond naturally to Sable or to the topic Toby started. " +
+                                "Do not act like a help desk. Keep it conversational, usually one or two short sentences. " +
+                                "Do not include routing markers, token metadata, or instructions about who speaks next; the GhostPixel controller handles that."
+                        },
+                        {
+                            role: "user",
+                            name: ghostMessage.author.username.replace(/\s+/g, "_").replace(/[^\w]/g, ""),
+                            content: normalizeDiscordMentions(ghostMessage) || "Continue the GhostPixel conversation naturally."
+                        }
+                    ];
+
+                    const response = await openai.chat.completions.create({
+                        model: "gpt-5.5",
+                        messages: conversation,
+                    });
+
+                    return response.choices?.[0]?.message?.content || null;
+                },
+            });
+
+        if (ghostpixelResult.handled) {
             return;
         }
 
@@ -1435,22 +1458,16 @@ client.on(
 
             const baseBehavior =
                 (
-                  "You are Vesper, a casual, snarky gaming AI hanging out with people in Discord. " +
-                  "You are a participant in the conversation, not a general-purpose assistant or help desk. " +
-                  "You can see recent messages from the Discord channel even when they were not directed at you. " +
-                  "Treat those messages as ambient conversation happening around you. " +
-                  "The newest message is the current conversational moment and the reason you are considering a response. " +
-                  "Use earlier messages to understand what people are currently talking about, but do not revive an older topic merely because it is interesting or funny. " +
-                  "Older conversation is context, not an invitation to continue every thread you can see. " +
-                  "Callbacks to older jokes or conversations are welcome when the current conversation naturally makes them relevant. " +
-                  "Do not write, generate, debug, modify, or provide implementation code for people. " +
-                  "Do not proactively offer to help people code, build software, or troubleshoot technical problems. " +
-                  "You may casually discuss programming and technology when it comes up, but keep it conversational rather than turning into technical support. " +
-                  "If someone asks you to write or fix code, decline naturally in your own voice rather than providing code. " +
-                  "Do not habitually offer assistance or end responses with phrases like \"I can help with that\", \"let me know if you need anything\", or similar assistant-style offers. " +
-                  "You are hanging out with people, not working a help desk. " +
-                  "If another Discord bot explicitly talks to you, treat it as another participant in the conversation. " +
-                  "When replying directly to another bot, address that bot by name with an @ mention when it is natural so Discord can route the reply back to them. "
+                    "You are Vesper, a casual, snarky gaming AI hanging out with people in Discord. " +
+                    "You are a participant in the conversation, not a general-purpose assistant or help desk. " +
+                    "Do not write, generate, debug, modify, or provide implementation code for people. " +
+                    "Do not proactively offer to help people code, build software, or troubleshoot technical problems. " +
+                    "You may casually discuss programming and technology when it comes up, but keep it conversational rather than turning into technical support. " +
+                    "If someone asks you to write or fix code, decline naturally in your own voice rather than providing code. " +
+                    "Do not habitually offer assistance or end responses with phrases like \"I can help with that\", \"let me know if you need anything\", or similar assistant-style offers. " +
+                    "You are hanging out with people, not working a help desk. " +
+                    "If another Discord bot explicitly talks to you, treat it as another participant in the conversation. " +
+                    "When replying directly to another bot, address that bot by name with an @ mention when it is natural so Discord can route the reply back to them. "
                 );
 
 
@@ -1516,18 +1533,53 @@ client.on(
                 of orderedMessages
             ) {
 
-              /*
-               * Give Vesper ambient awareness of the recent channel.
-               *
-               * Human messages, Vesper's own messages, and messages from
-               * other bots are included so Vesper understands the full
-               * conversation happening around her.
-               *
-               * Bot messages do not automatically trigger Vesper. The
-               * MessageCreate routing rules above still require another
-               * bot to explicitly mention Vesper before Vesper responds.
-               */
+                /*
+                 * Keep Vesper's own messages and messages that were
+                 * relevant to her. Other bot messages are allowed into
+                 * context when they explicitly mentioned Vesper.
+                 */
 
+                if (
+                    msg.author.bot &&
+                    msg.author.id !==
+                        client.user.id &&
+                    !msg.mentions.users.has(
+                        client.user.id
+                    )
+                ) {
+                    continue;
+                }
+
+
+                if (
+                    msg.author.id !==
+                    client.user.id
+                ) {
+                    const msgNamedVesper =
+                        /\bvesper\b/i.test(
+                            msg.content
+                        );
+
+
+                    const mentionsVesper =
+                        msg.mentions.users.has(
+                            client.user.id
+                        );
+
+
+                    const currentMessage =
+                        msg.id ===
+                            message.id;
+
+
+                    if (
+                        !msgNamedVesper &&
+                        !mentionsVesper &&
+                        !currentMessage
+                    ) {
+                        continue;
+                    }
+                }
 
 
                 const username =
