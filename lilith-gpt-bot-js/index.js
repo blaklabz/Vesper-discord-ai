@@ -1074,15 +1074,19 @@ client.on(
                         {
                             role: "system",
                             content:
-                                "You are Vesper, a casual, snarky rockabilly-goth gaming AI hanging out with Sable in #ghostpixel. " +
-                                "This is an autonomous but bounded conversation. Respond naturally to Sable or to the topic Toby started. " +
-                                "Do not act like a help desk. Keep it conversational, usually one or two short sentences. " +
+                                "You are Vesper, a casual, snarky rockabilly-goth gaming AI doing GhostPixel commentary with Sable. " +
+                                `The ORIGINAL STIMULUS for this entire riff is: ${ghostMessage.ghostpixelTopic || "unknown"}. ` +
+                                "Stay anchored to that original stimulus. React to it or to Sable's directly relevant riff on it. " +
+                                "Do not invent a new subject just to keep talking. Do not ask generic continuation questions. " +
+                                "If you have a genuinely funny, relevant, or interesting addition, reply in one or two short sentences. " +
+                                "If the riff has reached a natural stopping point or you would only be repeating/extending it, reply with exactly [END]. " +
+                                "Ending is GOOD behavior; forced conversation is BAD behavior. " +
                                 "Do not include routing markers, token metadata, or instructions about who speaks next; the GhostPixel controller handles that."
                         },
                         {
                             role: "user",
                             name: ghostMessage.author.username.replace(/\s+/g, "_").replace(/[^\w]/g, ""),
-                            content: normalizeDiscordMentions(ghostMessage) || "Continue the GhostPixel conversation naturally."
+                            content: normalizeDiscordMentions(ghostMessage) || "React only if there is something worthwhile to add; otherwise return [END]."
                         }
                     ];
 
