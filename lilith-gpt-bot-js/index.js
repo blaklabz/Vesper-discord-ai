@@ -5,6 +5,7 @@ const {
     Events,
     GatewayIntentBits,
     MessageType,
+    Partials,
 } = require("discord.js");
 
 const OpenAI =
@@ -47,6 +48,9 @@ const client =
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
+        ],
+      partials: [
+          Partials.Channel,
         ],
     });
 
