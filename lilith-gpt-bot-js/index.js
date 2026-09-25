@@ -45,6 +45,7 @@ const client =
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMembers,
             GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
         ],
     });
@@ -58,6 +59,21 @@ const CHANNELS = [
     "1232029053452812329",
     "516241218632548377",
 ];
+
+
+const ADMIN_USER_IDS =
+    new Set(
+        (
+            process.env.DISCORD_ADMIN_IDS ||
+            ""
+        )
+            .split(",")
+            .map(
+                (id) =>
+                    id.trim()
+            )
+            .filter(Boolean)
+    );
 
 
 const openai =
@@ -1027,6 +1043,30 @@ client.on(
 
         /*
          * ------------------------------------------------
+         * ADMIN-ONLY DIRECT MESSAGES
+         * ------------------------------------------------
+         */
+
+        const isDirectMessage =
+            !message.guild;
+
+
+        if (
+            isDirectMessage &&
+            !ADMIN_USER_IDS.has(
+                message.author.id
+            )
+        ) {
+            console.log(
+                `[dm] Ignoring unauthorized DM from ${message.author.id}`
+            );
+
+            return;
+        }
+
+
+        /*
+         * ------------------------------------------------
          * FREESTUFF
          * ------------------------------------------------
          */
@@ -1060,11 +1100,13 @@ client.on(
             return;
         }
 
+
         /*
          * GhostPixel gets first crack at #ghostpixel messages.
          * The token travels in a Discord embed footer, so Vesper and
          * Sable do not need a shared database or shared process.
          */
+
         const ghostpixelResult =
             await ghostpixel.handleIncoming({
                 message,
@@ -1099,9 +1141,11 @@ client.on(
                 },
             });
 
+
         if (ghostpixelResult.handled) {
             return;
         }
+
 
         if (
             message.author.bot &&
@@ -1253,6 +1297,7 @@ client.on(
 
 
         if (
+            !isDirectMessage &&
             !allowedChannel &&
             !mentionedBot &&
             !replyingToVesper
@@ -1262,6 +1307,7 @@ client.on(
 
 
         if (
+            !isDirectMessage &&
             !namedVesper &&
             !mentionedBot &&
             !replyingToVesper &&
