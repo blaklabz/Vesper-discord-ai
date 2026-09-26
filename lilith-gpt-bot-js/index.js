@@ -1701,48 +1701,226 @@ client.on(
 
             /*
              * ------------------------------------------------
-             * GENERATE
+             * GENERATE / TOOL LOOP
              * ------------------------------------------------
              */
 
-            const response =
-                await openai
-                    .chat
-                    .completions
-                    .create({
-                        model:
-                            "gpt-5.5",
-
-                        messages:
-                            conversation,
-
-                        tools:
-                            getToolDefinitions(),
-
-                        tool_choice:
-                            "auto",
-                    });
+            const MAX_TOOL_ROUNDS =
+                5;
 
 
-            const modelMessage =
-                response
-                    .choices?.[0]
-                    ?.message;
+            let responseMessage =
+                null;
 
 
-            console.log(
-                "[tools] model response:",
-                JSON.stringify(
-                    modelMessage,
-                    null,
-                    2
-                )
-            );
+            for (
+                let toolRound = 0;
+                toolRound <
+                    MAX_TOOL_ROUNDS;
+                toolRound++
+            ) {
+                const response =
+                    await openai
+                        .chat
+                        .completions
+                        .create({
+                            model:
+                                "gpt-5.5",
+
+                            messages:
+                                conversation,
+
+                            tools:
+                                getToolDefinitions(),
+
+                            tool_choice:
+                                "auto",
+                        });
 
 
-            const responseMessage =
-                modelMessage
-                    ?.content;
+                const modelMessage =
+                    response
+                        .choices?.[0]
+                        ?.message;
+
+
+                console.log(
+                    "[tools] model response:",
+                    JSON.stringify(
+                        modelMessage,
+                        null,
+                        2
+                    )
+                );
+
+
+                if (!modelMessage) {
+                    break;
+                }
+
+
+                /*
+                 * No tool request means Vesper has produced
+                 * her final conversational response.
+                 */
+
+                if (
+                    !modelMessage
+                        .tool_calls
+                        ?.length
+                ) {
+                    responseMessage =
+                        modelMessage.content;
+
+                    break;
+                }
+
+
+                /*
+                 * The assistant tool-call message MUST become
+                 * part of the conversation before we append
+                 * the corresponding tool results.
+                 */
+
+                conversation.push(
+                    modelMessage
+                );
+
+
+                /*
+                 * Execute every tool Vesper requested during
+                 * this round.
+                 */
+
+                for (
+                    const toolCall
+                    of modelMessage.tool_calls
+                ) {
+                    const toolName =
+                        toolCall
+                            .function
+                            .name;
+
+
+                    let toolArgs = {};
+
+
+                    try {
+                        toolArgs =
+                            JSON.parse(
+                                toolCall
+                                    .function
+                                    .arguments ||
+                                "{}"
+                            );
+
+                    } catch (error) {
+                        console.error(
+                            `[tools] Invalid arguments for ${toolName}:`,
+                            toolCall
+                                .function
+                                .arguments
+                        );
+
+
+                        conversation.push({
+                            role:
+                                "tool",
+
+                            tool_call_id:
+                                toolCall.id,
+
+                            content:
+                                JSON.stringify({
+                                    error:
+                                        "Invalid tool arguments.",
+                                }),
+                        });
+
+
+                        continue;
+                    }
+
+
+                    console.log(
+                        `[tools] executing ${toolName}:`,
+                        JSON.stringify(
+                            toolArgs
+                        )
+                    );
+
+
+                    try {
+                        const toolResult =
+                            await executeTool(
+                                toolName,
+                                toolArgs
+                            );
+
+
+                        console.log(
+                            `[tools] result ${toolName}:`,
+                            JSON.stringify(
+                                toolResult,
+                                null,
+                                2
+                            )
+                        );
+
+
+                        conversation.push({
+                            role:
+                                "tool",
+
+                            tool_call_id:
+                                toolCall.id,
+
+                            content:
+                                JSON.stringify(
+                                    toolResult
+                                ),
+                        });
+
+                    } catch (error) {
+                        console.error(
+                            `[tools] ${toolName} failed:`,
+                            error
+                        );
+
+
+                        conversation.push({
+                            role:
+                                "tool",
+
+                            tool_call_id:
+                                toolCall.id,
+
+                            content:
+                                JSON.stringify({
+                                    error:
+                                        error.message,
+                                }),
+                        });
+                    }
+                }
+            }
+
+
+            /*
+             * ------------------------------------------------
+             * FINAL RESPONSE CHECK
+             * ------------------------------------------------
+             */
+
+            if (
+                !responseMessage
+            ) {
+                await message.reply(
+                    "hmm... let me check to see if toby paid the bill.. try again in a sec.."
+                );
+
+                return;
+            }
 
 
             /*
