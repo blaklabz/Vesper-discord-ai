@@ -29,7 +29,12 @@ const {
     recordDiscovery,
 } = require(
     "./game-play/gameDatabase"
-);
+  );
+
+const {
+    getToolDefinitions,
+    executeTool,
+} = require("./tools");
 
 const ghostpixel = require("./ghostpixel");
 
@@ -1136,10 +1141,35 @@ client.on(
                         }
                     ];
 
-                    const response = await openai.chat.completions.create({
-                        model: "gpt-5.5",
-                        messages: conversation,
-                    });
+                    const response =
+                        await openai
+                            .chat
+                            .completions
+                            .create({
+                                model:
+                                    "gpt-5.5",
+
+                                messages:
+                                    conversation,
+
+                                tools:
+                                    getToolDefinitions(),
+
+                                tool_choice:
+                                    "auto",
+                            });
+
+
+                    console.log(
+                        "[tools] model response:",
+                        JSON.stringify(
+                            response
+                                .choices?.[0]
+                                ?.message,
+                            null,
+                            2
+                        )
+                    );
 
                     return response.choices?.[0]?.message?.content || null;
                 },
