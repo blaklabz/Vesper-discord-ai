@@ -29,14 +29,17 @@ const {
     recordDiscovery,
 } = require(
     "./game-play/gameDatabase"
-  );
+);
 
 const {
     getToolDefinitions,
     executeTool,
-} = require("./tools");
+} = require(
+    "./tools"
+);
 
-const ghostpixel = require("./ghostpixel");
+const ghostpixel =
+    require("./ghostpixel");
 
 
 /*
@@ -54,8 +57,9 @@ const client =
             GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
         ],
-      partials: [
-          Partials.Channel,
+
+        partials: [
+            Partials.Channel,
         ],
     });
 
@@ -1096,10 +1100,6 @@ client.on(
 
         /*
          * Ignore Vesper's own messages.
-         *
-         * Other bots may talk to Vesper, but only when they
-         * explicitly mention her. This allows controlled bot-to-bot
-         * conversation without making every bot message actionable.
          */
 
         if (
@@ -1111,72 +1111,85 @@ client.on(
 
 
         /*
-         * GhostPixel gets first crack at #ghostpixel messages.
-         * The token travels in a Discord embed footer, so Vesper and
-         * Sable do not need a shared database or shared process.
+         * ------------------------------------------------
+         * GHOSTPIXEL
+         * ------------------------------------------------
          */
 
         const ghostpixelResult =
             await ghostpixel.handleIncoming({
                 message,
                 client,
-                generateReply: async (ghostMessage) => {
-                    const conversation = [
-                        {
-                            role: "system",
-                            content:
-                                "You are Vesper, a casual, snarky rockabilly-goth gaming AI doing GhostPixel commentary with Sable. " +
-                                `The ORIGINAL STIMULUS for this entire riff is: ${ghostMessage.ghostpixelTopic || "unknown"}. ` +
-                                "Stay anchored to that original stimulus. React to it or to Sable's directly relevant riff on it. " +
-                                "Do not invent a new subject just to keep talking. Do not ask generic continuation questions. " +
-                                "If you have a genuinely funny, relevant, or interesting addition, reply in one or two short sentences. " +
-                                "If the riff has reached a natural stopping point or you would only be repeating/extending it, reply with exactly [END]. " +
-                                "Ending is GOOD behavior; forced conversation is BAD behavior. " +
-                                "Do not include routing markers, token metadata, or instructions about who speaks next; the GhostPixel controller handles that."
-                        },
-                        {
-                            role: "user",
-                            name: ghostMessage.author.username.replace(/\s+/g, "_").replace(/[^\w]/g, ""),
-                            content: normalizeDiscordMentions(ghostMessage) || "React only if there is something worthwhile to add; otherwise return [END]."
-                        }
-                    ];
 
-                    const response =
-                        await openai
-                            .chat
-                            .completions
-                            .create({
-                                model:
-                                    "gpt-5.5",
+                generateReply:
+                    async (
+                        ghostMessage
+                    ) => {
+                        const conversation = [
+                            {
+                                role:
+                                    "system",
 
-                                messages:
-                                    conversation,
+                                content:
+                                    "You are Vesper, a casual, snarky rockabilly-goth gaming AI doing GhostPixel commentary with Sable. " +
+                                    `The ORIGINAL STIMULUS for this entire riff is: ${ghostMessage.ghostpixelTopic || "unknown"}. ` +
+                                    "Stay anchored to that original stimulus. React to it or to Sable's directly relevant riff on it. " +
+                                    "Do not invent a new subject just to keep talking. Do not ask generic continuation questions. " +
+                                    "If you have a genuinely funny, relevant, or interesting addition, reply in one or two short sentences. " +
+                                    "If the riff has reached a natural stopping point or you would only be repeating/extending it, reply with exactly [END]. " +
+                                    "Ending is GOOD behavior; forced conversation is BAD behavior. " +
+                                    "Do not include routing markers, token metadata, or instructions about who speaks next; the GhostPixel controller handles that.",
+                            },
+                            {
+                                role:
+                                    "user",
 
-                                tools:
-                                    getToolDefinitions(),
+                                name:
+                                    ghostMessage
+                                        .author
+                                        .username
+                                        .replace(
+                                            /\s+/g,
+                                            "_"
+                                        )
+                                        .replace(
+                                            /[^\w]/g,
+                                            ""
+                                        ),
 
-                                tool_choice:
-                                    "auto",
-                            });
+                                content:
+                                    normalizeDiscordMentions(
+                                        ghostMessage
+                                    ) ||
+                                    "React only if there is something worthwhile to add; otherwise return [END].",
+                            },
+                        ];
 
 
-                    console.log(
-                        "[tools] model response:",
-                        JSON.stringify(
-                            response
-                                .choices?.[0]
-                                ?.message,
-                            null,
-                            2
-                        )
-                    );
+                        const response =
+                            await openai
+                                .chat
+                                .completions
+                                .create({
+                                    model:
+                                        "gpt-5.5",
 
-                    return response.choices?.[0]?.message?.content || null;
-                },
+                                    messages:
+                                        conversation,
+                                });
+
+
+                        return response
+                            .choices?.[0]
+                            ?.message?.content ||
+                            null;
+                    },
             });
 
 
-        if (ghostpixelResult.handled) {
+        if (
+            ghostpixelResult.handled
+        ) {
             return;
         }
 
@@ -1208,11 +1221,6 @@ client.on(
                 message.content
             );
 
-
-        /*
-         * Ignore general broadcasts, but not when
-         * somebody is specifically talking to Vesper.
-         */
 
         const isBroadcast =
             message.content.includes(
@@ -1354,11 +1362,6 @@ client.on(
         }
 
 
-        /*
-         * Command parsing keeps the older cleaned
-         * content behavior.
-         */
-
         const cleanedContent =
             message.content
                 .replace(
@@ -1486,18 +1489,8 @@ client.on(
 
         /*
          * ------------------------------------------------
-         * OPENAI CHAT
-         * ------------------------------------------------
-         */
-
-
-        /*
-         * ------------------------------------------------
          * SIMULATED TYPING
          * ------------------------------------------------
-         *
-         * Typing is cosmetic. Discord API failures here
-         * must never crash Vesper or prevent a response.
          */
 
         await message
@@ -1617,12 +1610,6 @@ client.on(
                 of orderedMessages
             ) {
 
-                /*
-                 * Keep Vesper's own messages and messages that were
-                 * relevant to her. Other bot messages are allowed into
-                 * context when they explicitly mentioned Vesper.
-                 */
-
                 if (
                     msg.author.bot &&
                     msg.author.id !==
@@ -1728,13 +1715,69 @@ client.on(
 
                         messages:
                             conversation,
+
+                        tools:
+                            getToolDefinitions(),
+
+                        tool_choice:
+                            "auto",
                     });
 
 
-            const responseMessage =
+            const modelMessage =
                 response
                     .choices?.[0]
-                    ?.message?.content;
+                    ?.message;
+
+
+            console.log(
+                "[tools] model response:",
+                JSON.stringify(
+                    modelMessage,
+                    null,
+                    2
+                )
+            );
+
+
+            const responseMessage =
+                modelMessage
+                    ?.content;
+
+
+            /*
+             * ------------------------------------------------
+             * TEMPORARY TOOL-CALL CHECKPOINT
+             * ------------------------------------------------
+             *
+             * At this stage Vesper can request a tool, but we
+             * intentionally have not wired execution into the
+             * conversation loop yet.
+             */
+
+            if (
+                modelMessage
+                    ?.tool_calls
+                    ?.length
+            ) {
+                console.log(
+                    "[tools] Vesper requested:",
+                    JSON.stringify(
+                        modelMessage
+                            .tool_calls,
+                        null,
+                        2
+                    )
+                );
+
+
+                await message.reply(
+                    "hmm... let me check to see if toby paid the bill.. try again in a sec.."
+                );
+
+
+                return;
+            }
 
 
             if (
@@ -1743,6 +1786,7 @@ client.on(
                 await message.reply(
                     "hmm... let me check to see if toby paid the bill.. try again in a sec.."
                 );
+
 
                 return;
             }

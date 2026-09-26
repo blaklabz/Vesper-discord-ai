@@ -5,6 +5,12 @@ const {
 );
 
 
+/*
+ * -------------------------------------------------------
+ * TOOL REGISTRY
+ * -------------------------------------------------------
+ */
+
 const tools = {
     get_datetime: {
         definition: {
@@ -37,6 +43,12 @@ const tools = {
 };
 
 
+/*
+ * -------------------------------------------------------
+ * TOOL DEFINITIONS
+ * -------------------------------------------------------
+ */
+
 function getToolDefinitions() {
     return Object.values(
         tools
@@ -46,6 +58,12 @@ function getToolDefinitions() {
     );
 }
 
+
+/*
+ * -------------------------------------------------------
+ * TOOL EXECUTION
+ * -------------------------------------------------------
+ */
 
 async function executeTool(
     name,
