@@ -1925,53 +1925,6 @@ client.on(
 
             /*
              * ------------------------------------------------
-             * TEMPORARY TOOL-CALL CHECKPOINT
-             * ------------------------------------------------
-             *
-             * At this stage Vesper can request a tool, but we
-             * intentionally have not wired execution into the
-             * conversation loop yet.
-             */
-
-            if (
-                modelMessage
-                    ?.tool_calls
-                    ?.length
-            ) {
-                console.log(
-                    "[tools] Vesper requested:",
-                    JSON.stringify(
-                        modelMessage
-                            .tool_calls,
-                        null,
-                        2
-                    )
-                );
-
-
-                await message.reply(
-                    "hmm... let me check to see if toby paid the bill.. try again in a sec.."
-                );
-
-
-                return;
-            }
-
-
-            if (
-                !responseMessage
-            ) {
-                await message.reply(
-                    "hmm... let me check to see if toby paid the bill.. try again in a sec.."
-                );
-
-
-                return;
-            }
-
-
-            /*
-             * ------------------------------------------------
              * RESOLVE OUTBOUND DISCORD MENTIONS
              * ------------------------------------------------
              */
