@@ -15,9 +15,21 @@ const {
     recordPlayFinished,
 } = require("./gameDatabase");
 
+const {
+    formAndShareGameOpinion,
+} = require("./game-opinion");
 
-const MIN_PLAY_MINUTES = 10;
-const MAX_PLAY_MINUTES = 60;
+
+const DEFAULT_MIN_PLAY_MINUTES = 10;
+const DEFAULT_MAX_PLAY_MINUTES = 60;
+
+const MIN_PLAY_MINUTES =
+    Number(process.env.VESPER_MIN_PLAY_MINUTES) ||
+    DEFAULT_MIN_PLAY_MINUTES;
+
+const MAX_PLAY_MINUTES =
+    Number(process.env.VESPER_MAX_PLAY_MINUTES) ||
+    DEFAULT_MAX_PLAY_MINUTES;
 
 const MIN_DISCOVERY_DELAY_MINUTES = 2;
 const MAX_DISCOVERY_DELAY_MINUTES = 8;
@@ -574,6 +586,13 @@ function startNextGame(
             () => {
                 finishCurrentGame(
                     client
+                ).catch(
+                    (error) => {
+                        console.error(
+                            "[game-play] finishCurrentGame failed:",
+                            error
+                        );
+                    }
                 );
             },
 
@@ -582,7 +601,7 @@ function startNextGame(
 }
 
 
-function finishCurrentGame(
+async function finishCurrentGame(
     client
 ) {
     if (!currentGame) {
@@ -603,6 +622,26 @@ function finishCurrentGame(
     recordPlayFinished(
         finishedGame
     );
+
+
+    /*
+     * Vesper forms her own post-play opinion, stores it,
+     * and voices it in the channel where the game was
+     * originally discovered. Opinion failure must not
+     * wedge the game queue.
+     */
+    try {
+        await formAndShareGameOpinion(
+            finishedGame,
+            client
+        );
+
+    } catch (error) {
+        console.error(
+            `[game-opinion] Could not form opinion for ${finishedGame.title}:`,
+            error
+        );
+    }
 
 
     currentGame = null;
