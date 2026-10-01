@@ -515,17 +515,18 @@ def choose_title(
         supplied_title
     )
 
+    if not supplied_title_is_bad(
+        supplied_title,
+        appid,
+    ):
+        return supplied_title
+
     cleaned_page_title = (
         clean_page_title(
             page_title
         )
     )
 
-    #
-    # Prefer the title returned by the authoritative
-    # store page. The supplied title is discovery/search
-    # input and may contain typos or shorthand.
-    #
     if (
         cleaned_page_title
         and cleaned_page_title.lower()
@@ -535,12 +536,6 @@ def choose_title(
         )
     ):
         return cleaned_page_title
-
-    if not supplied_title_is_bad(
-        supplied_title,
-        appid,
-    ):
-        return supplied_title
 
     if source == "steam":
         slug_title = (
@@ -762,6 +757,30 @@ def main():
         page = fetch_page(
             fetch_url
         )
+
+        #
+        # A Steam app request is only usable if the final resolved
+        # page still represents the exact app we asked for.
+        # Age/login/interstitial redirects must never become games
+        # such as "Sign In".
+        #
+        if source == "steam":
+            requested_appid = get_steam_appid(
+                original_url
+            )
+
+            resolved_appid = get_steam_appid(
+                page["url"]
+            )
+
+            if (
+                requested_appid
+                and resolved_appid
+                != requested_appid
+            ):
+                raise ValueError(
+                    "steam_app_page_unavailable"
+                )
 
         source = get_source(
             page["url"]
