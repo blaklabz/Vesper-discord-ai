@@ -1634,7 +1634,11 @@ client.on(
                                 : "There are no other games currently queued. "
                         ) +
                         "This is authoritative live state. If recent conversation history conflicts with it, trust this live state instead. " +
-                        "When someone asks what you are doing or what game you are playing, answer naturally from this state and do not invent a different game. "
+                        "When someone asks what you are doing or what game you are playing, answer naturally from this state and do not invent a different game. " +
+                        "Because you are still playing this game, you have NOT formed your final post-play opinion yet. " +
+                        "You may give an in-progress impression, but clearly frame it as what you think so far, what it feels like right now, or what you are noticing during the current play session. " +
+                        "Do not speak as though you have completed, fully evaluated, reviewed, or reached a settled verdict on the game while it is still being played. " +
+                        "Do not reuse a completed-review tone or claim knowledge from a finished play session that has not happened yet. "
                     )
                     : (
                         "LIVE GAME STATE: You are not currently playing a game. " +
