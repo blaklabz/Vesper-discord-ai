@@ -14,6 +14,8 @@ const OpenAI =
 const {
     enqueueGame,
     startNextGame,
+    getCurrentGame,
+    getQueue,
 } = require(
     "./game-play/gameManager"
 );
@@ -1616,11 +1618,41 @@ client.on(
                 );
 
 
+            const liveGame =
+                getCurrentGame();
+
+            const queuedGames =
+                getQueue();
+
+            const liveGameState =
+                liveGame?.title
+                    ? (
+                        `LIVE GAME STATE: You are currently playing ${liveGame.title}. ` +
+                        (
+                            queuedGames.length
+                                ? `Games currently queued after it: ${queuedGames.map((game) => game.title).filter(Boolean).join(", ")}. `
+                                : "There are no other games currently queued. "
+                        ) +
+                        "This is authoritative live state. If recent conversation history conflicts with it, trust this live state instead. " +
+                        "When someone asks what you are doing or what game you are playing, answer naturally from this state and do not invent a different game. "
+                    )
+                    : (
+                        "LIVE GAME STATE: You are not currently playing a game. " +
+                        (
+                            queuedGames.length
+                                ? `Games waiting in your queue: ${queuedGames.map((game) => game.title).filter(Boolean).join(", ")}. `
+                                : "Your game queue is currently empty. "
+                        ) +
+                        "This is authoritative live state. If recent conversation history implies you are still playing something, trust this live state instead. "
+                    );
+
+
             const systemPrompt =
                 messageIsMedia
                     ?
                         (
                             baseBehavior +
+                            liveGameState +
                             "Someone has posted an image or GIF. " +
                             "React naturally to what is visually present. " +
                             "Respond like another person hanging out in the channel, not like an image-analysis service. " +
@@ -1635,6 +1667,7 @@ client.on(
                         (
                             "mmm hmmm im here.. " +
                             baseBehavior +
+                            liveGameState +
                             "Keep the response natural and conversational. " +
                             "Usually respond in one or two short sentences unless the conversation genuinely calls for more."
                         );
