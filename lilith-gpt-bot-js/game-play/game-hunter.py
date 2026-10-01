@@ -373,6 +373,19 @@ def clean_page_title(title):
                 :-len(suffix)
             ].strip()
 
+    #
+    # Steam may decorate the storefront title with a temporary
+    # promotion such as "Save 75% on Catherine Classic".
+    # Keep the raw page_title elsewhere as discovery context,
+    # but never use the promotion as the game's identity.
+    #
+    title = re.sub(
+        r"^Save\s+\d+%\s+on\s+",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     return title
 
 
@@ -515,27 +528,34 @@ def choose_title(
         supplied_title
     )
 
-    if not supplied_title_is_bad(
-        supplied_title,
-        appid,
-    ):
-        return supplied_title
-
     cleaned_page_title = (
         clean_page_title(
             page_title
         )
     )
 
+    #
+    # Prefer the authoritative storefront title when available.
+    # clean_page_title removes storefront suffixes and temporary
+    # Steam sale prefixes while page_title itself remains untouched
+    # in the returned metadata for discovery context.
+    #
     if (
         cleaned_page_title
         and cleaned_page_title.lower()
         not in (
             "age check",
             "steam age check",
+            "sign in",
         )
     ):
         return cleaned_page_title
+
+    if not supplied_title_is_bad(
+        supplied_title,
+        appid,
+    ):
+        return supplied_title
 
     if source == "steam":
         slug_title = (
