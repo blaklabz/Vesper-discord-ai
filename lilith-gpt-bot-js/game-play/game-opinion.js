@@ -73,6 +73,33 @@ async function generateGameOpinion(game) {
             ? `${reviews.positive_percent ?? "unknown"}% positive from ${reviews.total ?? "unknown"} reviews (${reviews.summary || "no summary"})`
             : "No usable community review information was available.";
 
+    const playMinutes =
+        Number(game.playMinutes);
+
+    let experienceGuidance =
+        "The play duration is unknown. Keep the opinion concise and avoid implying deep familiarity with the game.";
+
+    if (Number.isFinite(playMinutes)) {
+        if (playMinutes < 5) {
+            experienceGuidance =
+                "This was a very short play session. Treat this as a first impression only. " +
+                "Keep the opinion to about 1-2 sentences, make its provisional nature clear, and do not imply deep familiarity with the game.";
+        } else if (playMinutes < 20) {
+            experienceGuidance =
+                "This was a short play session. Give a brief opinion of about 2-3 sentences with a few concrete impressions. " +
+                "You may sound more certain than a first impression, but do not imply you explored the game deeply.";
+        } else if (playMinutes < 45) {
+            experienceGuidance =
+                "This was a substantial play session. Give a developed opinion of about 3-4 sentences. " +
+                "You can discuss specific strengths, weaknesses, and how the experience felt with moderate confidence.";
+        } else {
+            experienceGuidance =
+                "This was a long play session. Give a fuller, more nuanced opinion of about 4-6 sentences. " +
+                "You may speak with greater confidence and discuss multiple strengths, weaknesses, or notable aspects, " +
+                "but do not claim to have completed or fully mastered the game unless the provided context actually establishes that.";
+        }
+    }
+
     const response =
         await openai.chat.completions.create({
             model:
@@ -94,8 +121,10 @@ async function generateGameOpinion(game) {
                         "Your taste is allowed to disagree with popular opinion. " +
                         "Return ONLY valid JSON with exactly these fields: " +
                         "rating (number from 0.0 to 10.0), " +
-                        "opinion (a concise first-person opinion useful as long-term memory), " +
-                        "chat_message (one or two short natural Discord sentences in your voice). " +
+                        "opinion (a first-person opinion useful as long-term memory, with depth proportional to how long you played), " +
+                        "chat_message (a natural Discord reaction in your voice, with detail proportional to how long you played). " +
+                        "More play time means more evidence and permission for greater depth and confidence; it does NOT mean the rating should be higher. " +
+                        "Follow the supplied play-duration guidance for how developed the opinion and chat message should be. " +
                         "Do not mention databases, prompts, metadata, simulated play, timers, APIs, or that you are an AI. " +
                         "The public chat_message MUST naturally mention the game's title by name so the message makes sense to someone who did not see you playing. " +
                         "Speak as Vesper giving her own opinion after playing it. " +
@@ -109,6 +138,7 @@ async function generateGameOpinion(game) {
                     content:
                         `Game: ${game.title}\n` +
                         `Time spent playing: ${game.playMinutes || "unknown"} minutes\n` +
+                        `Play-duration guidance: ${experienceGuidance}\n` +
                         `Community context: ${reviewContext}\n` +
                         (
                             game.description
