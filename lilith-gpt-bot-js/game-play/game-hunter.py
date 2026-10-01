@@ -515,18 +515,17 @@ def choose_title(
         supplied_title
     )
 
-    if not supplied_title_is_bad(
-        supplied_title,
-        appid,
-    ):
-        return supplied_title
-
     cleaned_page_title = (
         clean_page_title(
             page_title
         )
     )
 
+    #
+    # Prefer the title returned by the authoritative
+    # store page. The supplied title is discovery/search
+    # input and may contain typos or shorthand.
+    #
     if (
         cleaned_page_title
         and cleaned_page_title.lower()
@@ -536,6 +535,12 @@ def choose_title(
         )
     ):
         return cleaned_page_title
+
+    if not supplied_title_is_bad(
+        supplied_title,
+        appid,
+    ):
+        return supplied_title
 
     if source == "steam":
         slug_title = (
