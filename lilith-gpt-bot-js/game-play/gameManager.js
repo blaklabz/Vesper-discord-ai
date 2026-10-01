@@ -1,10 +1,6 @@
 "use strict";
 
 const {
-    ActivityType,
-} = require("discord.js");
-
-const {
     shouldQueueGame,
 } = require("./game-decision");
 
@@ -18,6 +14,12 @@ const {
 const {
     formAndShareGameOpinion,
 } = require("./game-opinion");
+
+const {
+    setPlaying,
+    clearPlaying,
+    wakeEngaged,
+} = require("../vesper-presence");
 
 
 const DEFAULT_MIN_PLAY_MINUTES = 10;
@@ -494,16 +496,6 @@ function chooseRandomQueuedGame() {
  * -------------------------------------------------------
  */
 
-function clearPlayingActivity(
-    client
-) {
-    client.user.setPresence({
-        activities: [],
-
-        status:
-            "online",
-    });
-}
 
 
 /*
@@ -559,20 +551,15 @@ function startNextGame(
     );
 
 
-    client.user.setPresence({
-        activities: [
-            {
-                name:
-                    currentGame.title,
+    wakeEngaged(
+        client,
+        "game-start"
+    );
 
-                type:
-                    ActivityType.Playing,
-            },
-        ],
-
-        status:
-            "online",
-    });
+    setPlaying(
+        client,
+        currentGame.title
+    );
 
 
     console.log(
@@ -657,8 +644,9 @@ async function finishCurrentGame(
     }
 
 
-    clearPlayingActivity(
-        client
+    clearPlaying(
+        client,
+        "game-finished"
     );
 
 

@@ -14,6 +14,10 @@ const openai =
     });
 
 
+const GAME_OPINION_CHANNEL_ID =
+    "516241218632548377";
+
+
 /*
  * -------------------------------------------------------
  * HELPERS
@@ -93,6 +97,9 @@ async function generateGameOpinion(game) {
                         "opinion (a concise first-person opinion useful as long-term memory), " +
                         "chat_message (one or two short natural Discord sentences in your voice). " +
                         "Do not mention databases, prompts, metadata, simulated play, timers, APIs, or that you are an AI. " +
+                        "The public chat_message MUST naturally mention the game's title by name so the message makes sense to someone who did not see you playing. " +
+                        "Speak as Vesper giving her own opinion after playing it. " +
+                        "Do not mechanically say 'My review of...' or 'My opinion of...' unless that wording genuinely fits the moment. " +
                         "Do not format the chat message like a formal review and do not mechanically announce the numeric score unless it feels natural.",
                 },
                 {
@@ -205,12 +212,9 @@ async function formAndShareGameOpinion(
         `[game-opinion] ${game.title}: ${result.rating}/10 - ${result.opinion}`
     );
 
-    if (
-        !client ||
-        !game.channelId
-    ) {
+    if (!client) {
         console.log(
-            `[game-opinion] No Discord channel available for ${game.title}; opinion saved only.`
+            `[game-opinion] No Discord client available for ${game.title}; opinion saved only.`
         );
 
         return result;
@@ -219,7 +223,7 @@ async function formAndShareGameOpinion(
     try {
         const channel =
             await client.channels.fetch(
-                game.channelId
+                GAME_OPINION_CHANNEL_ID
             );
 
         if (
@@ -227,7 +231,7 @@ async function formAndShareGameOpinion(
             typeof channel.send !== "function"
         ) {
             console.log(
-                `[game-opinion] Channel ${game.channelId} is not sendable; opinion saved only.`
+                `[game-opinion] Channel ${GAME_OPINION_CHANNEL_ID} is not sendable; opinion saved only.`
             );
 
             return result;
