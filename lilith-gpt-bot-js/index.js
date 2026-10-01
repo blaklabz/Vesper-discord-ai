@@ -1101,16 +1101,6 @@ client.on(
                 client,
                 "authorized-dm"
             );
-        } else if (
-            message.channelId ===
-                GENERAL_CHANNEL_ID &&
-            message.author.id !==
-                client.user.id
-        ) {
-            wakeAmbient(
-                client,
-                "general-chat"
-            );
         }
 
 
@@ -1290,6 +1280,26 @@ client.on(
             CHANNELS.includes(
                 message.channelId
             );
+
+
+        /*
+         * Ordinary human chatter in general wakes Vesper ambiently.
+         * This happens after bot/broadcast filtering so startup noise
+         * and ignored bot traffic cannot immediately stomp Idle.
+         */
+        if (
+            message.channelId ===
+                GENERAL_CHANNEL_ID &&
+            !message.author.bot &&
+            !isBroadcast &&
+            !mentionedBot &&
+            !namedVesper
+        ) {
+            wakeAmbient(
+                client,
+                "general-chat"
+            );
+        }
 
 
         /*
