@@ -42,6 +42,13 @@ const ghostpixel =
     require("./ghostpixel");
 
 
+const {
+    initializePresence,
+    wakeAmbient,
+    wakeEngaged,
+} = require("./vesper-presence");
+
+
 /*
  * -------------------------------------------------------
  * CLIENT / CONFIG
@@ -72,6 +79,10 @@ const CHANNELS = [
     "1232029053452812329",
     "516241218632548377",
 ];
+
+
+const GENERAL_CHANNEL_ID =
+    "516241218632548377";
 
 
 const ADMIN_USER_IDS =
@@ -1040,6 +1051,11 @@ client.once(
         console.log(
             `The bot is online as ${readyClient.user.tag}.`
         );
+
+
+        initializePresence(
+            readyClient
+        );
     }
 );
 
@@ -1078,6 +1094,24 @@ client.on(
         }
 
 
+        if (isDirectMessage) {
+            wakeEngaged(
+                client,
+                "authorized-dm"
+            );
+        } else if (
+            message.channelId ===
+                GENERAL_CHANNEL_ID &&
+            message.author.id !==
+                client.user.id
+        ) {
+            wakeAmbient(
+                client,
+                "general-chat"
+            );
+        }
+
+
         /*
          * ------------------------------------------------
          * FREESTUFF
@@ -1089,6 +1123,11 @@ client.on(
             message.author.id ===
                 FREESTUFF_BOT_ID
         ) {
+            wakeEngaged(
+                client,
+                "game-discovery"
+            );
+
             await handleFreeStuffMessage(
                 message,
                 client
@@ -1190,6 +1229,11 @@ client.on(
         if (
             ghostpixelResult.handled
         ) {
+            wakeEngaged(
+                client,
+                "ghostpixel"
+            );
+
             return;
         }
 
@@ -1306,6 +1350,17 @@ client.on(
 
 
         if (
+            messageIsMedia &&
+            allowedChannel
+        ) {
+            wakeEngaged(
+                client,
+                "media"
+            );
+        }
+
+
+        if (
             messageIsMedia
         ) {
             debugMessageRouting(
@@ -1336,6 +1391,19 @@ client.on(
             await isReplyToVesper(
                 message
             );
+
+
+        if (
+            isDirectMessage ||
+            namedVesper ||
+            mentionedBot ||
+            replyingToVesper
+        ) {
+            wakeEngaged(
+                client,
+                "direct-interaction"
+            );
+        }
 
 
         if (
@@ -1976,6 +2044,11 @@ client.on(
                         );
                 }
             }
+
+            wakeEngaged(
+                client,
+                "vesper-response"
+            );
 
         } catch (error) {
             console.error(
