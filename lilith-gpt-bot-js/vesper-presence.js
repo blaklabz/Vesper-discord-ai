@@ -103,7 +103,7 @@ function setPlaying(client, title) {
     client.user.setPresence({
         activities: [
             {
-                name: `🎮:vesperscontroller: :vesperscontroller:1555577919206719608 ${title}`,
+                name: `🎮 ${title}`,
                 type: ActivityType.Playing,
             },
         ],

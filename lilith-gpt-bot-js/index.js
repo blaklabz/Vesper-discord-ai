@@ -1642,12 +1642,21 @@ client.on(
                     );
 
 
+            const gamingEmoji =
+                "GAMING EMOJI: You have a custom Discord controller emoji: " +
+                "<:vesperscontroller:1555577919206719608> " +
+                "You may naturally use this emoji when talking about games, reacting to gaming events, " +
+                "starting or finishing a game, discussing what you're currently playing, or giving opinions about games. " +
+                "Use it occasionally when it fits; do not append it mechanically to every gaming response. ";
+
+
             const systemPrompt =
                 messageIsMedia
                     ?
                         (
                             baseBehavior +
                             liveGameState +
+                            gamingEmoji +
                             "Someone has posted an image or GIF. " +
                             "React naturally to what is visually present. " +
                             "Respond like another person hanging out in the channel, not like an image-analysis service. " +
@@ -1663,6 +1672,7 @@ client.on(
                             "mmm hmmm im here.. " +
                             baseBehavior +
                             liveGameState +
+                            gamingEmoji +
                             "Keep the response natural and conversational. " +
                             "Usually respond in one or two short sentences unless the conversation genuinely calls for more."
                         );
