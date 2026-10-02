@@ -103,7 +103,7 @@ function setPlaying(client, title) {
     client.user.setPresence({
         activities: [
             {
-                name: `🎮 ${title}`,
+                name: `🎮 Playing ${title}`,
                 type: ActivityType.Playing,
             },
         ],
