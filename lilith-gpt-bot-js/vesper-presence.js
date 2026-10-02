@@ -103,7 +103,7 @@ function setPlaying(client, title) {
     client.user.setPresence({
         activities: [
             {
-                name: title,
+                name: `<:vesperscontroller:1555577919206719608> ${title}`,
                 type: ActivityType.Playing,
             },
         ],
