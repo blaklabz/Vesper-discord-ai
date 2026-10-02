@@ -18,7 +18,6 @@ const {
 const {
     setPlaying,
     clearPlaying,
-    wakeEngaged,
 } = require("../vesper-presence");
 
 
@@ -550,11 +549,6 @@ function startNextGame(
         `${duration.minutes} minute(s)`
     );
 
-
-    wakeEngaged(
-        client,
-        "game-start"
-    );
 
     setPlaying(
         client,

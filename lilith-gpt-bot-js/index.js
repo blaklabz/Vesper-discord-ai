@@ -1096,14 +1096,6 @@ client.on(
         }
 
 
-        if (isDirectMessage) {
-            wakeEngaged(
-                client,
-                "authorized-dm"
-            );
-        }
-
-
         /*
          * ------------------------------------------------
          * FREESTUFF
@@ -1359,17 +1351,6 @@ client.on(
             messageHasMedia(
                 message
             );
-
-
-        if (
-            messageIsMedia &&
-            allowedChannel
-        ) {
-            wakeEngaged(
-                client,
-                "media"
-            );
-        }
 
 
         if (
@@ -2091,11 +2072,6 @@ client.on(
                         );
                 }
             }
-
-            wakeEngaged(
-                client,
-                "vesper-response"
-            );
 
         } catch (error) {
             console.error(
