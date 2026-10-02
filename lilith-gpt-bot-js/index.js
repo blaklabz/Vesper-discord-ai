@@ -1650,6 +1650,16 @@ client.on(
                 "Use it occasionally when it fits; do not append it mechanically to every gaming response. ";
 
 
+            const schedulingBehavior =
+                "GAME SESSION SCHEDULING: You can create, list, update, and delete native Discord scheduled gaming events using your game-session tools. " +
+                "When a user gives a relative date or time such as Sunday at 4pm, call get_datetime first so you can resolve the intended calendar date. " +
+                "The server community uses America/New_York local time unless the user explicitly specifies another timezone. " +
+                "When calling create_game_session or update_game_session, provide start_time as ISO-8601 with an explicit UTC offset. " +
+                "For updates or deletions where you do not already have the exact event ID, call list_game_sessions first and match the requested event. " +
+                "If multiple events plausibly match, ask the user which one instead of guessing. " +
+                "Never say an event was created, changed, or deleted unless the corresponding tool returned success. ";
+
+
             const systemPrompt =
                 messageIsMedia
                     ?
@@ -1657,6 +1667,7 @@ client.on(
                             baseBehavior +
                             liveGameState +
                             gamingEmoji +
+                            schedulingBehavior +
                             "Someone has posted an image or GIF. " +
                             "React naturally to what is visually present. " +
                             "Respond like another person hanging out in the channel, not like an image-analysis service. " +
@@ -1673,6 +1684,7 @@ client.on(
                             baseBehavior +
                             liveGameState +
                             gamingEmoji +
+                            schedulingBehavior +
                             "Keep the response natural and conversational. " +
                             "Usually respond in one or two short sentences unless the conversation genuinely calls for more."
                         );
@@ -1960,7 +1972,13 @@ client.on(
                         const toolResult =
                             await executeTool(
                                 toolName,
-                                toolArgs
+                                toolArgs,
+                                {
+                                    guild: message.guild,
+                                    channelId: message.channelId,
+                                    requesterId: message.author.id,
+                                    requesterTag: message.author.tag,
+                                }
                             );
 
 
