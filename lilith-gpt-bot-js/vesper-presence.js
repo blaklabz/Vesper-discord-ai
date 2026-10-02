@@ -31,6 +31,11 @@ function setIdle(client) {
         status: "idle",
     });
 
+    console.log(
+      "[presence] Discord client state after setIdle:",
+       client.user.presence.status
+    );
+
     console.log("[presence] Vesper is idle");
 }
 
