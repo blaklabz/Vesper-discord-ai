@@ -9,6 +9,10 @@ const {
     deleteGameSession,
 } = require("./gameSessions");
 
+const {
+    queryGameHistory,
+} = require("./gameHistory");
+
 const tools = {
     get_datetime: {
         definition: {
@@ -24,6 +28,45 @@ const tools = {
             },
         },
         execute: async () => getDatetime(),
+    },
+
+    query_game_history: {
+        definition: {
+            type: "function",
+            function: {
+                name: "query_game_history",
+                description:
+                    "Query Vesper's persistent history of games she has played and opinions she formed. " +
+                    "Use last_played when asked for the most recently completed game. " +
+                    "Use recent for games completed since a specific time. " +
+                    "Use lookup when asked whether Vesper played a particular game or what she thought about it. " +
+                    "For relative dates such as last week or yesterday, use get_datetime first to resolve the date.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        mode: {
+                            type: "string",
+                            enum: [
+                                "last_played",
+                                "recent",
+                                "lookup",
+                            ],
+                        },
+                        since: {
+                            type: "string",
+                            description: "ISO-8601 date/time used with recent mode.",
+                        },
+                        title: {
+                            type: "string",
+                            description: "Game title or partial title used with lookup mode.",
+                        },
+                    },
+                    required: ["mode"],
+                    additionalProperties: false,
+                },
+            },
+        },
+        execute: queryGameHistory,
     },
 
     create_game_session: {

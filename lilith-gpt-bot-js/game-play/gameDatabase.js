@@ -220,6 +220,76 @@ function getGameForObject(
 }
 
 
+function getLastPlayedGame() {
+    return (
+        db
+            .prepare(`
+                SELECT *
+                FROM games
+                WHERE last_play_finished_at IS NOT NULL
+                ORDER BY last_play_finished_at DESC
+                LIMIT 1
+            `)
+            .get() ||
+        null
+    );
+}
+
+
+function getPlayedGamesSince(
+    sinceTimestamp
+) {
+    if (
+        !Number.isFinite(
+            sinceTimestamp
+        )
+    ) {
+        return [];
+    }
+
+
+    return db
+        .prepare(`
+            SELECT *
+            FROM games
+            WHERE last_play_finished_at IS NOT NULL
+              AND last_play_finished_at >= ?
+            ORDER BY last_play_finished_at DESC
+        `)
+        .all(
+            sinceTimestamp
+        );
+}
+
+
+function findGameHistory(
+    title
+) {
+    if (!title) {
+        return [];
+    }
+
+
+    return db
+        .prepare(`
+            SELECT *
+            FROM games
+            WHERE LOWER(title) LIKE LOWER(?)
+            ORDER BY
+                CASE
+                    WHEN last_play_finished_at IS NULL THEN 1
+                    ELSE 0
+                END,
+                last_play_finished_at DESC,
+                last_seen_at DESC
+            LIMIT 10
+        `)
+        .all(
+            `%${title}%`
+        );
+}
+
+
 /*
  * -------------------------------------------------------
  * EVENTS
@@ -921,6 +991,10 @@ module.exports = {
 
     getGame,
     getGameForObject,
+
+    getLastPlayedGame,
+    getPlayedGamesSince,
+    findGameHistory,
 
     recordDiscovery,
     recordEvent,
