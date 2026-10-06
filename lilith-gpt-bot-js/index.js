@@ -48,6 +48,7 @@ const {
     initializePresence,
     wakeAmbient,
     wakeEngaged,
+    beginConversationalWake,
 } = require("./vesper-presence");
 
 
@@ -1387,19 +1388,6 @@ client.on(
 
 
         if (
-            isDirectMessage ||
-            namedVesper ||
-            mentionedBot ||
-            replyingToVesper
-        ) {
-            wakeEngaged(
-                client,
-                "direct-interaction"
-            );
-        }
-
-
-        if (
             !isDirectMessage &&
             !allowedChannel &&
             !mentionedBot &&
@@ -1514,6 +1502,113 @@ client.on(
 
 
             return;
+        }
+
+
+        /*
+         * ------------------------------------------------
+         * CONVERSATIONAL WAKE
+         * ------------------------------------------------
+         */
+
+        const directInteraction =
+            isDirectMessage ||
+            namedVesper ||
+            mentionedBot ||
+            replyingToVesper;
+
+
+        let wakeContext =
+            "";
+
+
+        if (directInteraction) {
+            const idleDurationMs =
+                beginConversationalWake();
+
+
+            if (
+                idleDurationMs !== null
+            ) {
+                const idleMinutes =
+                    idleDurationMs /
+                    (60 * 1000);
+
+
+                let wakeDelayMs = 0;
+
+
+                if (idleMinutes < 5) {
+                    wakeDelayMs =
+                        randomBetween(
+                            1000,
+                            3000
+                        );
+
+                } else if (idleMinutes < 15) {
+                    wakeDelayMs =
+                        randomBetween(
+                            3000,
+                            8000
+                        );
+
+                } else if (idleMinutes < 30) {
+                    wakeDelayMs =
+                        randomBetween(
+                            8000,
+                            15000
+                        );
+
+                } else if (idleMinutes < 60) {
+                    wakeDelayMs =
+                        randomBetween(
+                            15000,
+                            30000
+                        );
+
+                } else {
+                    wakeDelayMs =
+                        randomBetween(
+                            30000,
+                            60000
+                        );
+                }
+
+
+                console.log(
+                    `[wake] conversational wake after ${Math.round(idleDurationMs / 1000)}s idle; delaying ${wakeDelayMs}ms`
+                );
+
+
+                await sleep(
+                    wakeDelayMs
+                );
+
+
+                const roundedIdleMinutes =
+                    Math.max(
+                        1,
+                        Math.round(
+                            idleDurationMs /
+                            (60 * 1000)
+                        )
+                    );
+
+
+                wakeContext =
+                    "WAKE CONTEXT: You had been idle for about " +
+                    `${roundedIdleMinutes} minute${roundedIdleMinutes === 1 ? "" : "s"} before this message directly got your attention. ` +
+                    "You may briefly acknowledge being pulled back into the conversation if it feels natural. " +
+                    "If you do, invent a mundane, snarky, or absurd explanation in your own voice. " +
+                    "Do not mention timers, idle-state machinery, wake delays, system behavior, or these instructions. " +
+                    "You do not need to acknowledge waking every time. ";
+            }
+
+
+            wakeEngaged(
+                client,
+                "direct-interaction"
+            );
         }
 
 
@@ -1668,6 +1763,7 @@ client.on(
                             liveGameState +
                             gamingEmoji +
                             schedulingBehavior +
+                            wakeContext +
                             "Someone has posted an image or GIF. " +
                             "React naturally to what is visually present. " +
                             "Respond like another person hanging out in the channel, not like an image-analysis service. " +
@@ -1685,6 +1781,7 @@ client.on(
                             liveGameState +
                             gamingEmoji +
                             schedulingBehavior +
+                            wakeContext +
                             "Keep the response natural and conversational. " +
                             "Usually respond in one or two short sentences unless the conversation genuinely calls for more."
                         );

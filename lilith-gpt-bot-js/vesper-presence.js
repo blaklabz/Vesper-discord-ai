@@ -11,6 +11,7 @@ let idleTimer = null;
 let wakeUntil = 0;
 let playing = false;
 let idleSince = null;
+let waking = false;
 
 function clearIdleTimer() {
     if (idleTimer) {
@@ -25,6 +26,7 @@ function setIdle(client) {
     }
 
     idleSince = Date.now();
+    waking = false;
     wakeUntil = 0;
     clearIdleTimer();
 
@@ -66,6 +68,9 @@ function wakeFor(client, durationMs, reason = "activity") {
         return;
     }
 
+    idleSince = null;
+    waking = false;
+
     // Activity may extend wakefulness, but never shorten it.
     // idleSince is intentionally preserved for the upcoming
     // conversational wake-latency implementation.
@@ -102,6 +107,8 @@ function setPlaying(client, title) {
     }
 
     playing = true;
+    idleSince = null;
+    waking = false;
     clearIdleTimer();
 
     client.user.setPresence({
@@ -128,6 +135,7 @@ function initializePresence(client) {
     playing = false;
     wakeUntil = 0;
     idleSince = null;
+    waking = false;
     clearIdleTimer();
     setIdle(client);
 }
@@ -144,6 +152,23 @@ function getIdleDurationMs() {
     return Date.now() - idleSince;
 }
 
+function beginConversationalWake() {
+    if (!idleSince || waking || playing) {
+        return null;
+    }
+
+    const idleDurationMs =
+        Date.now() - idleSince;
+
+    waking = true;
+
+    return idleDurationMs;
+}
+
+function isWaking() {
+    return waking;
+}
+
 module.exports = {
     initializePresence,
     wakeAmbient,
@@ -152,4 +177,6 @@ module.exports = {
     clearPlaying,
     isPlaying,
     getIdleDurationMs,
+    beginConversationalWake,
+    isWaking,
 };
