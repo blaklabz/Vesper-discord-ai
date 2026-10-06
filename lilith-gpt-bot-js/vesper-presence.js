@@ -10,6 +10,7 @@ const ENGAGED_WAKE_MS = 15 * 60 * 1000;
 let idleTimer = null;
 let wakeUntil = 0;
 let playing = false;
+let idleSince = null;
 
 function clearIdleTimer() {
     if (idleTimer) {
@@ -23,6 +24,7 @@ function setIdle(client) {
         return;
     }
 
+    idleSince = Date.now();
     wakeUntil = 0;
     clearIdleTimer();
 
@@ -32,8 +34,8 @@ function setIdle(client) {
     });
 
     console.log(
-      "[presence] Discord client state after setIdle:",
-       client.user.presence.status
+        "[presence] Discord client state after setIdle:",
+        client.user.presence.status
     );
 
     console.log("[presence] Vesper is idle");
@@ -65,6 +67,8 @@ function wakeFor(client, durationMs, reason = "activity") {
     }
 
     // Activity may extend wakefulness, but never shorten it.
+    // idleSince is intentionally preserved for the upcoming
+    // conversational wake-latency implementation.
     wakeUntil = Math.max(
         wakeUntil,
         Date.now() + durationMs
@@ -123,12 +127,21 @@ function clearPlaying(client, reason = "game-finished") {
 function initializePresence(client) {
     playing = false;
     wakeUntil = 0;
+    idleSince = null;
     clearIdleTimer();
     setIdle(client);
 }
 
 function isPlaying() {
     return playing;
+}
+
+function getIdleDurationMs() {
+    if (!idleSince) {
+        return 0;
+    }
+
+    return Date.now() - idleSince;
 }
 
 module.exports = {
@@ -138,4 +151,5 @@ module.exports = {
     setPlaying,
     clearPlaying,
     isPlaying,
+    getIdleDurationMs,
 };
