@@ -524,7 +524,12 @@ function startNextGame(
 
 
     const duration =
-        randomPlayDurationMs();
+        game.discoverySource === "manual-test" &&
+        Number.isSafeInteger(game.testPlayMinutes) &&
+        game.testPlayMinutes >= 1 &&
+        game.testPlayMinutes <= 120
+            ? { minutes: game.testPlayMinutes, ms: game.testPlayMinutes * 60 * 1000 }
+            : randomPlayDurationMs();
 
 
     currentGame = {

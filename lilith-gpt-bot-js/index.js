@@ -1432,7 +1432,7 @@ client.on(
 
         const testGameMatch =
             cleanedContent.match(
-                /^testgame\s+(.+)$/i
+                /^testgame\s+(?:-t\s+(\d+)\s+)?(.+)$/i
             );
 
 
@@ -1440,8 +1440,17 @@ client.on(
             testGameMatch
         ) {
             let title =
-                testGameMatch[1]
+                testGameMatch[2]
                     .trim();
+
+            const testMinutes = testGameMatch[1]
+                ? Number(testGameMatch[1])
+                : null;
+
+            if (testMinutes !== null && (!Number.isSafeInteger(testMinutes) || testMinutes < 1 || testMinutes > 120)) {
+                await message.reply("Test duration must be between 1 and 120 minutes.");
+                return;
+            }
 
 
             title =
@@ -1472,6 +1481,8 @@ client.on(
 
                 discoverySource:
                     "manual-test",
+
+                ...(testMinutes !== null ? { testPlayMinutes: testMinutes } : {}),
 
                 discoveredAt:
                     Date.now(),
