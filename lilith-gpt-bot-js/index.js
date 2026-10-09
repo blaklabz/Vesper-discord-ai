@@ -75,7 +75,7 @@ const client =
     });
 
 
-const SABLE_BOT_ID = process.env.Sable_user_id || "";
+const SABLE_USER_ID = process.env.Sable_user_id || "";
 
 const FREESTUFF_BOT_ID =
     process.env.FREESTUFF_BOT_ID;
@@ -133,15 +133,15 @@ function isObviousHelpRequest(content) {
 }
 
 async function sableAvailability(guild) {
-    if (!guild || !SABLE_BOT_ID) {
-        console.log(`[sable-presence] guild=${Boolean(guild)} configured=${Boolean(SABLE_BOT_ID)} status=unknown`);
+    if (!guild || !SABLE_USER_ID) {
+        console.log(`[sable-presence] guild=${Boolean(guild)} configured=${Boolean(SABLE_USER_ID)} status=unknown`);
         return "unknown";
     }
     try {
         // Presence is a gateway/cache property, not a reliable REST member field.
-        const cached = guild.members.cache.get(SABLE_BOT_ID);
-        const member = cached || await guild.members.fetch(SABLE_BOT_ID);
-        const status = member?.presence?.status || guild.presences.cache.get(SABLE_BOT_ID)?.status;
+        const cached = guild.members.cache.get(SABLE_USER_ID);
+        const member = cached || await guild.members.fetch(SABLE_USER_ID);
+        const status = member?.presence?.status || guild.presences.cache.get(SABLE_USER_ID)?.status;
         const resolved = ["online", "idle", "dnd", "offline"].includes(status) ? status : "unknown";
         console.log(`[sable-presence] member_found=${Boolean(member)} cached=${Boolean(cached)} status=${resolved}`);
         return resolved;
