@@ -112,33 +112,62 @@ const ADMIN_USER_IDS =
  * commands keep their existing routing. No OpenAI call for matched requests.
  */
 function isObviousHelpRequest(content) {
-    const text = content.replace(/<@!?\d+>/g, " ").replace(/\bvesper\b/gi, " ").trim();
+    const text = content.replace(/<@!?\d+>/g, " ").replace(/\bvesper\b[:,]?/gi, " ").trim();
     if (!text) return false;
-    // Opinions about games are social conversation, not support tickets.
+
+    // Gaming opinions and ordinary social chat are not help-desk requests.
     if (/^(?:what do you think|how do you feel|do you like|what'?s your (?:favorite|opinion))\b/i.test(text)) return false;
-    return /^(?:(?:hey|yo|please|could you|can you|would you|will you|do me a favor|stop (?:for a second|playing|what you(?:'re| are) doing)[,!. ]*)\s*)*(?:(?:please|just|quickly)\s+)*(?:explain|teach|show me how|walk me through|summari[sz]e|research|look up|calculate|solve|write|code|debug|fix|troubleshoot|help(?: me| us| with)|give me (?:instructions|steps|a tutorial|a guide)|make me (?:a plan|a script)|tell me how|what (?:is|are) (?:a |an |the )?(?:kubernetes|lagrange points))\b/i.test(text) ||
-        /\b(?:can|could|would|will) you (?:please )?(?:explain|teach|show|summari[sz]e|research|calculate|solve|write|debug|fix|troubleshoot|help|walk me through)\b/i.test(text);
+
+    // Match requests anywhere in the message, including mixed social + help
+    // messages: "what are you doing? Also, I need an explanation of ...".
+    // Keep this conservative: don't intercept casual "why do you like Quake?".
+    const requestPatterns = [
+        /\b(?:explain|teach|show me how|walk me through|summari[sz]e|research|look up|calculate|solve|debug|troubleshoot)\b/i,
+        /\b(?:can|could|would|will) you (?:please )?(?:help|write|code|fix|make|plan|explain|teach|show|research|calculate|solve)\b/i,
+        /\b(?:i|we) (?:need|want|would like) (?:you to |an? )?(?:explanation|tutorial|walkthrough|guide|instructions|steps|help|answer|summary|script|plan|to know why|to understand)\b/i,
+        /\b(?:tell me|give me) (?:why|how|an explanation|the answer|instructions|steps|a tutorial|a guide)\b/i,
+        /\b(?:how do i|how can i|how should i|what are the steps to)\b/i,
+        /\b(?:write|make|create) (?:me |us )?(?:a |an )?(?:script|program|plan|guide|tutorial|summary)\b/i,
+    ];
+    return requestPatterns.some((pattern) => pattern.test(text));
 }
 
 async function sableAvailability(guild) {
-    if (!guild || !SABLE_BOT_ID) return "unknown";
+    if (!guild || !SABLE_BOT_ID) {
+        console.log(`[sable-presence] guild=${Boolean(guild)} configured=${Boolean(SABLE_BOT_ID)} status=unknown`);
+        return "unknown";
+    }
     try {
-        const member = await guild.members.fetch(SABLE_BOT_ID);
-        // Discord requires GuildPresences privileged intent to see reliable status.
-        const status = member?.presence?.status;
-        return ["online", "idle", "dnd", "offline"].includes(status) ? status : "unknown";
+        // Presence is a gateway/cache property, not a reliable REST member field.
+        const cached = guild.members.cache.get(SABLE_BOT_ID);
+        const member = cached || await guild.members.fetch(SABLE_BOT_ID);
+        const status = member?.presence?.status || guild.presences.cache.get(SABLE_BOT_ID)?.status;
+        const resolved = ["online", "idle", "dnd", "offline"].includes(status) ? status : "unknown";
+        console.log(`[sable-presence] member_found=${Boolean(member)} cached=${Boolean(cached)} status=${resolved}`);
+        return resolved;
     } catch (error) {
-        console.warn("[no-help] Could not resolve Sable presence:", error.message);
+        console.warn("[sable-presence] lookup failed:", error.message);
         return "unknown";
     }
 }
 
 function lazyRedirect(status) {
-    // No @mention: avoid waking Sable or causing bot-to-bot loops.
-    if (status === "online") return "Nope, that's librarian work. Sable's around — go ask her. I'm off the clock. 🎮";
-    if (status === "idle") return "The hippie librarian's out to lunch. I'm not covering her shift. 😴";
-    if (status === "dnd") return "Library's got a DO NOT DISTURB sign up. I'm not taking over the help desk. 🎮";
-    return "Library's closed, dude. Sable's not available, and I don't do homework. 😈";
+    // Never ping Sable. Keep responses local and cheap.
+    const replies = {
+        online: [
+            "The librarian's at her desk. Ask Sable — I'm busy being unemployed. 🎮",
+            "Sable's around. Take your homework to the hippie librarian; I'm off duty. 😈",
+        ],
+        idle: [
+            "The librarian's out to lunch. I'm not covering her shift. 🎮",
+            "Sable's taking a break. Library hours are not my problem. 😴",
+        ],
+        dnd: ["Library's got a DO NOT DISTURB sign up. I'm not the substitute teacher. 🎮"],
+        offline: ["Library's closed. No, I don't do homework either. 😈"],
+        unknown: ["Can't tell if the librarian's in. Either way, I'm not doing homework. 🎮"],
+    };
+    const options = replies[status] || replies.unknown;
+    return options[Math.floor(Math.random() * options.length)];
 }
 
 const openai =
@@ -1559,15 +1588,17 @@ client.on(
          * ZERO-API HELP REFUSAL
          * ------------------------------------------------
          */
-        if (!message.author.bot && !messageIsMedia && !postedUrl &&
-            isObviousHelpRequest(cleanedContent)) {
+        const helpRequest = !message.author.bot && !messageIsMedia && !postedUrl &&
+            isObviousHelpRequest(cleanedContent);
+        console.log(`[help-gate] matched=${helpRequest} media=${messageIsMedia} url=${Boolean(postedUrl)}`);
+        if (helpRequest) {
             wakeEngaged(client, "lazy-help-refusal");
             const status = await sableAvailability(message.guild);
             await message.reply({
                 content: lazyRedirect(status),
                 allowedMentions: { parse: [], repliedUser: false },
             });
-            console.log(`[no-help] Local refusal; Sable status=${status}; no model request`);
+            console.log(`[help-gate] local-response=true api-call=false sable=${status}`);
             return;
         }
 
@@ -1880,6 +1911,7 @@ client.on(
                         (
                             "mmm hmmm im here.. " +
                             baseBehavior +
+                            librarianContext +
                             liveGameState +
                             liveGamingConversation +
                             gamingEmoji +
