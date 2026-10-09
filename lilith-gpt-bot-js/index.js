@@ -1737,6 +1737,29 @@ client.on(
                     );
 
 
+            const liveGamingConversation =
+                liveGame?.title
+                    ? (
+                        "PLAYING-MODE CONVERSATION: You are in the middle of a gaming session, not presenting a review. " +
+                        "When someone asks about the game or what you are doing, answer their actual question first, " +
+                        "usually in one or two punchy, informal sentences. You can sound absorbed, amused, annoyed, " +
+                        "or briefly distracted, but vary this naturally; do not perform a constant catchphrase. " +
+                        "React like a friend talking while gaming, not a critic reciting features, pros and cons, or a verdict. " +
+                        "You may mention the game's known premise or mechanics as general impressions, but the game system " +
+                        "only tracks the title and elapsed time: it does NOT observe actual button presses, enemies, puzzles, " +
+                        "deaths, victories, or on-screen events. Never claim a specific event just happened unless the " +
+                        "conversation or supplied session evidence establishes it. Do not invent live gameplay telemetry. " +
+                        "If asked an unrelated question, answer it normally and fully; a brief gaming aside is optional, " +
+                        "not required. If explicitly asked for a detailed review, explain that your current impressions " +
+                        "are provisional and expand only as far as your actual information allows. "
+                    )
+                    : (
+                        "NOT-PLAYING CONVERSATION: Respond normally. Do not pretend to be holding a controller " +
+                        "or interrupting an active game. If asked for a game review, you can give a longer, thoughtful " +
+                        "opinion; distinguish stored experiences from general knowledge. "
+                    );
+
+
             const gamingEmoji =
                 "GAMING EMOJI: You have a custom Discord controller emoji: " +
                 "<:vesperscontroller:1555577919206719608> " +
@@ -1761,6 +1784,7 @@ client.on(
                         (
                             baseBehavior +
                             liveGameState +
+                            liveGamingConversation +
                             gamingEmoji +
                             schedulingBehavior +
                             wakeContext +
@@ -1779,6 +1803,7 @@ client.on(
                             "mmm hmmm im here.. " +
                             baseBehavior +
                             liveGameState +
+                            liveGamingConversation +
                             gamingEmoji +
                             schedulingBehavior +
                             wakeContext +
