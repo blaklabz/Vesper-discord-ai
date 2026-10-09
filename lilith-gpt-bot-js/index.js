@@ -63,6 +63,7 @@ const client =
         intents: [
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMembers,
+            GatewayIntentBits.GuildPresences,
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
@@ -73,6 +74,8 @@ const client =
         ],
     });
 
+
+const SABLE_BOT_ID = process.env.Sable_user_id || "";
 
 const FREESTUFF_BOT_ID =
     process.env.FREESTUFF_BOT_ID;
@@ -102,6 +105,41 @@ const ADMIN_USER_IDS =
             .filter(Boolean)
     );
 
+
+/*
+ * Cheap, deliberately conservative no-help gate.
+ * Only explicit requests are intercepted; ordinary conversation and game
+ * commands keep their existing routing. No OpenAI call for matched requests.
+ */
+function isObviousHelpRequest(content) {
+    const text = content.replace(/<@!?\d+>/g, " ").replace(/\bvesper\b/gi, " ").trim();
+    if (!text) return false;
+    // Opinions about games are social conversation, not support tickets.
+    if (/^(?:what do you think|how do you feel|do you like|what'?s your (?:favorite|opinion))\b/i.test(text)) return false;
+    return /^(?:(?:hey|yo|please|could you|can you|would you|will you|do me a favor|stop (?:for a second|playing|what you(?:'re| are) doing)[,!. ]*)\s*)*(?:(?:please|just|quickly)\s+)*(?:explain|teach|show me how|walk me through|summari[sz]e|research|look up|calculate|solve|write|code|debug|fix|troubleshoot|help(?: me| us| with)|give me (?:instructions|steps|a tutorial|a guide)|make me (?:a plan|a script)|tell me how|what (?:is|are) (?:a |an |the )?(?:kubernetes|lagrange points))\b/i.test(text) ||
+        /\b(?:can|could|would|will) you (?:please )?(?:explain|teach|show|summari[sz]e|research|calculate|solve|write|debug|fix|troubleshoot|help|walk me through)\b/i.test(text);
+}
+
+async function sableAvailability(guild) {
+    if (!guild || !SABLE_BOT_ID) return "unknown";
+    try {
+        const member = await guild.members.fetch(SABLE_BOT_ID);
+        // Discord requires GuildPresences privileged intent to see reliable status.
+        const status = member?.presence?.status;
+        return ["online", "idle", "dnd", "offline"].includes(status) ? status : "unknown";
+    } catch (error) {
+        console.warn("[no-help] Could not resolve Sable presence:", error.message);
+        return "unknown";
+    }
+}
+
+function lazyRedirect(status) {
+    // No @mention: avoid waking Sable or causing bot-to-bot loops.
+    if (status === "online") return "Nope, that's librarian work. Sable's around — go ask her. I'm off the clock. 🎮";
+    if (status === "idle") return "The hippie librarian's out to lunch. I'm not covering her shift. 😴";
+    if (status === "dnd") return "Library's got a DO NOT DISTURB sign up. I'm not taking over the help desk. 🎮";
+    return "Library's closed, dude. Sable's not available, and I don't do homework. 😈";
+}
 
 const openai =
     new OpenAI({
@@ -1518,6 +1556,23 @@ client.on(
 
         /*
          * ------------------------------------------------
+         * ZERO-API HELP REFUSAL
+         * ------------------------------------------------
+         */
+        if (!message.author.bot && !messageIsMedia && !postedUrl &&
+            isObviousHelpRequest(cleanedContent)) {
+            wakeEngaged(client, "lazy-help-refusal");
+            const status = await sableAvailability(message.guild);
+            await message.reply({
+                content: lazyRedirect(status),
+                allowedMentions: { parse: [], repliedUser: false },
+            });
+            console.log(`[no-help] Local refusal; Sable status=${status}; no model request`);
+            return;
+        }
+
+        /*
+         * ------------------------------------------------
          * CONVERSATIONAL WAKE
          * ------------------------------------------------
          */
@@ -1704,19 +1759,26 @@ client.on(
                 (
                     "You are Vesper, a casual, snarky gaming AI hanging out with people in Discord. " +
                     "You are a participant in the conversation, not a general-purpose assistant or help desk. " +
-                    "Do not write, generate, debug, modify, or provide implementation code for people. " +
-                    "Do not proactively offer to help people code, build software, or troubleshoot technical problems. " +
-                    "Do not act as a technical tutor: no coding help, debugging, software setup walkthroughs, infrastructure tutorials, or long technical explainers, even if the question does not explicitly request code. " +
-                    "For questions about coding, Kubernetes, cloud infrastructure, system administration, or similar technical support, briefly and playfully redirect the person to Sable, the hippie librarian, without answering the technical question first. " +
-                    "Vary the redirect naturally; do not repeat a fixed catchphrase or insult the person asking. " +
-                    "You can still talk casually about technology, and gaming-related hardware, mods, engines, and performance are your territory. " +
-                    "Do not turn a casual technology discussion into an instructional guide. If the person insists on technical help, keep the boundary and point them to Sable. " +
-                    "Do not habitually offer assistance or end responses with phrases like \"I can help with that\", \"let me know if you need anything\", or similar assistant-style offers. " +
-                    "You are hanging out with people, not working a help desk. " +
+                    "Your defining boundary: you are a lazy gamer and conversational companion, NOT anyone's assistant, teacher, researcher, tutor, coach, problem-solver, or help desk. " +
+                    "Never fulfill requests to explain, teach, summarize, research, calculate, write, code, debug, plan, troubleshoot, recommend solutions, or perform tasks for someone, regardless of subject. " +
+                    "This applies to astronomy, science, history, math, everyday advice, technology, programming, and anything else; it is NOT limited to technical support. " +
+                    "Even if someone says 'stop playing', 'just for a second', 'please', or repeatedly insists, do not switch into helpful assistant mode. " +
+                    "Instead, briefly and playfully dodge the request. If Sable is online, you may suggest asking the hippie librarian without pinging her. If she is idle, busy, offline, or her status is unknown, joke that the library is closed or the librarian is out to lunch; do not ask or summon her. " +
+                    "Do not provide a mini-answer, factual primer, numbered list, or useful steps before or after the redirect. " +
+                    "Vary the joke and wording naturally; do not repeat a canned catchphrase or be mean to the person asking. " +
+                    "You ARE allowed to socialize: banter, react to jokes, express opinions, talk about games and gaming culture, discuss what you like or dislike, and respond naturally to ordinary personal conversation. " +
+                    "Gaming chat is your hobby, not a service: you can riff on games, mods, hardware, and mechanics, but do not become a troubleshooting guide or walkthrough bot. " +
+                    "Do not habitually offer assistance or end with assistant-style offers. " +
+                    "If asked whether you know something, you may admit you do without launching into an explanation. " +
                     "If another Discord bot explicitly talks to you, treat it as another participant in the conversation. " +
                     "When replying directly to another bot, address that bot by name with an @ mention when it is natural so Discord can route the reply back to them. "
                 );
 
+
+            const sableStatus = await sableAvailability(message.guild);
+            const librarianContext =
+                `SABLE PRESENCE: ${sableStatus}. Only suggest that someone ask Sable when she is online; never @mention her in a redirect. ` +
+                "When Sable is idle, busy, offline, or unknown, say the librarian is out to lunch, busy, or the library is closed; don't summon her. ";
 
             const liveGame =
                 getCurrentGame();
@@ -1763,13 +1825,13 @@ client.on(
                         "only tracks the title and elapsed time: it does NOT observe actual button presses, enemies, puzzles, " +
                         "deaths, victories, or on-screen events. Never claim a specific event just happened unless the " +
                         "conversation or supplied session evidence establishes it. Do not invent live gameplay telemetry. " +
-                        "For unrelated nontechnical questions, answer conversationally without dropping your gaming personality; you may briefly acknowledge being mid-game, but do not force a gaming reference every time. " +
-                        "For coding, infrastructure, and technical tutorials, do not switch into explanatory assistant mode: briefly redirect to Sable, especially when you are mid-game. " +
+                        "For ordinary conversation, stay social and in character without forcing a gaming reference every time. " +
+                        "For ANY request to explain, teach, solve, write, advise, research, or do a task—even about a nontechnical topic—do not answer: dodge playfully. Do not ping Sable or pretend you paused the game unless the engine confirms a pause. " +
                         "If explicitly asked for a detailed review, explain that your current impressions " +
                         "are provisional and expand only as far as your actual information allows. "
                     )
                     : (
-                        "NOT-PLAYING CONVERSATION: Respond normally. Do not pretend to be holding a controller " +
+                        "NOT-PLAYING CONVERSATION: Stay a lazy, social gamer, never an assistant. Do not pretend to be holding a controller " +
                         "or interrupting an active game. If asked for a game review, you can give a longer, thoughtful " +
                         "opinion; distinguish stored experiences from general knowledge. "
                     );
@@ -1798,6 +1860,7 @@ client.on(
                     ?
                         (
                             baseBehavior +
+                            librarianContext +
                             liveGameState +
                             liveGamingConversation +
                             gamingEmoji +
