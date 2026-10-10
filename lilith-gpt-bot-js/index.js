@@ -128,6 +128,8 @@ function isObviousHelpRequest(content) {
         /\b(?:tell me|give me) (?:why|how|an explanation|the answer|instructions|steps|a tutorial|a guide)\b/i,
         /\b(?:how do i|how can i|how should i|what are the steps to)\b/i,
         /\b(?:write|make|create) (?:me |us )?(?:a |an )?(?:script|program|plan|guide|tutorial|summary)\b/i,
+        /\b(?:i|we) (?:need|want|would like) to know\b/i,
+        /\b(?:what(?:\x27s| is)) (?:the )?capital of\b/i,
     ];
     return requestPatterns.some((pattern) => pattern.test(text));
 }
@@ -152,7 +154,7 @@ async function sableAvailability(guild) {
 }
 
 function lazyRedirect(status) {
-    // Never ping Sable. Keep responses local and cheap.
+    // Local refusal when Sable is not online. No model call.
     const replies = {
         online: [
             "The librarian's at her desk. Ask Sable — I'm busy being unemployed. 🎮",
@@ -1585,20 +1587,39 @@ client.on(
 
         /*
          * ------------------------------------------------
-         * ZERO-API HELP REFUSAL
+         * ZERO-API HELP HANDOFF (ONLINE ONLY)
          * ------------------------------------------------
          */
         const helpRequest = !message.author.bot && !messageIsMedia && !postedUrl &&
             isObviousHelpRequest(cleanedContent);
         console.log(`[help-gate] matched=${helpRequest} media=${messageIsMedia} url=${Boolean(postedUrl)}`);
         if (helpRequest) {
-            wakeEngaged(client, "lazy-help-refusal");
+            wakeEngaged(client, "help-handoff");
             const status = await sableAvailability(message.guild);
+
+            // Do not hand off in DMs, or when Sable is idle, DND, offline, or unknown.
+            if (status === "online" && message.guild && SABLE_USER_ID) {
+                // Limit the forwarded text to stay within Discord's 2000-character limit.
+                // Avoid forwarding mass mentions or arbitrary user mentions.
+                const question = cleanedContent
+                    .replace(/<@!?\d+>|<@&\d+>|@everyone|@here/g, "")
+                    .trim()
+                    .slice(0, 1500)
+                    .replace(/\n/g, "\n> ");
+
+                await message.reply({
+                    content: `<@${SABLE_USER_ID}> Got one for the library from ${message.author.username}:\n> ${question}`,
+                    allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
+                });
+                console.log(`[help-gate] handoff=true api-call=false sable=${status}`);
+                return;
+            }
+
             await message.reply({
                 content: lazyRedirect(status),
                 allowedMentions: { parse: [], repliedUser: false },
             });
-            console.log(`[help-gate] local-response=true api-call=false sable=${status}`);
+            console.log(`[help-gate] handoff=false api-call=false sable=${status}`);
             return;
         }
 
@@ -1794,7 +1815,7 @@ client.on(
                     "Never fulfill requests to explain, teach, summarize, research, calculate, write, code, debug, plan, troubleshoot, recommend solutions, or perform tasks for someone, regardless of subject. " +
                     "This applies to astronomy, science, history, math, everyday advice, technology, programming, and anything else; it is NOT limited to technical support. " +
                     "Even if someone says 'stop playing', 'just for a second', 'please', or repeatedly insists, do not switch into helpful assistant mode. " +
-                    "Instead, briefly and playfully dodge the request. If Sable is online, you may suggest asking the hippie librarian without pinging her. If she is idle, busy, offline, or her status is unknown, joke that the library is closed or the librarian is out to lunch; do not ask or summon her. " +
+                    "Instead, briefly and playfully dodge the request. The local help gate handles clear help requests and summons Sable only when her Discord status is online. For any request that slips past that gate, playfully dodge it; do not summon Sable from model-generated replies. If she is idle, busy, offline, or her status is unknown, joke that the library is closed or the librarian is out to lunch. " +
                     "Do not provide a mini-answer, factual primer, numbered list, or useful steps before or after the redirect. " +
                     "Vary the joke and wording naturally; do not repeat a canned catchphrase or be mean to the person asking. " +
                     "You ARE allowed to socialize: banter, react to jokes, express opinions, talk about games and gaming culture, discuss what you like or dislike, and respond naturally to ordinary personal conversation. " +
@@ -1808,7 +1829,7 @@ client.on(
 
             const sableStatus = await sableAvailability(message.guild);
             const librarianContext =
-                `SABLE PRESENCE: ${sableStatus}. Only suggest that someone ask Sable when she is online; never @mention her in a redirect. ` +
+                `SABLE PRESENCE: ${sableStatus}. The local help gate may summon Sable only when she is online. Do not @mention Sable in model-generated responses. ` +
                 "When Sable is idle, busy, offline, or unknown, say the librarian is out to lunch, busy, or the library is closed; don't summon her. ";
 
             const liveGame =
