@@ -1695,17 +1695,28 @@ client.on(
                     .slice(0, 1500)
                     .replace(/\n/g, "\n> ");
 
-                let intro;
+                // Handoffs bypass the normal conversational typing loop, so maintain
+                // their own indicator while the model composes the introduction.
+                const refreshHandoffTyping = () => message.channel.sendTyping().catch(
+                    (error) => console.error("[typing] Handoff indicator failed:", error.message)
+                );
+                await refreshHandoffTyping();
+                const handoffTypingInterval = setInterval(refreshHandoffTyping, 5000);
                 try {
-                    intro = await generateSableHandoff(message.author.username, question);
-                } catch (error) {
-                    console.error("[help-gate] handoff phrasing failed:", error.message);
-                    intro = "Sable, this one is yours. I'm going back to my game.";
+                    let intro;
+                    try {
+                        intro = await generateSableHandoff(message.author.username, question);
+                    } catch (error) {
+                        console.error("[help-gate] handoff phrasing failed:", error.message);
+                        intro = "Sable, this one is yours. I'm going back to my game.";
+                    }
+                    await message.reply({
+                        content: `<@${SABLE_USER_ID}> ${intro}\n> ${question}`,
+                        allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
+                    });
+                } finally {
+                    clearInterval(handoffTypingInterval);
                 }
-                await message.reply({
-                    content: `<@${SABLE_USER_ID}> ${intro}\n> ${question}`,
-                    allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
-                });
                 console.log(`[help-gate] handoff=true api-call=generated sable=${status}`);
                 return;
             }
