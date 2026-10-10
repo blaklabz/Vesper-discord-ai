@@ -131,45 +131,47 @@ function isObviousHelpRequest(content) {
         /\b(?:i|we) (?:need|want|would like) to know\b/i,
         /\b(?:what(?:\x27s| is)) (?:the )?capital of\b/i,
     ];
-    return requestPatterns.some((pattern) => pattern.test(text));
+    if (requestPatterns.some((pattern) => pattern.test(text))) return true;
+
+    // Route clear factual questions, but leave personal banter and game chat
+    // with Vesper. This is deliberately narrower than matching every question.
+    const factualQuestion = /^(?:(?:hey|okay|so|um|uh)[,\s]+)*(?:(?:what(?:'s| is| was| were)|who(?:'s| is| was)|when(?: did| was| is)|where(?: is| was| did)|why (?:did|do|does|is|was|were)|how (?:many|much|long|far|old))\b)/i.test(text);
+    const personalOrGaming = /\b(?:you|your|yours|vesper|we|us|our|i|me|my|mine)\b/i.test(text) ||
+        /\b(?:game|gaming|video games?|quake|balatro|valheim|steam|xbox|playstation|nintendo|gta|elden ring|minecraft|boss fight|level up)\b/i.test(text);
+    return factualQuestion && !personalOrGaming;
 }
 
-async function sableAvailability(guild) {
-    if (!guild || !SABLE_USER_ID) {
-        console.log(`[sable-presence] guild=${Boolean(guild)} configured=${Boolean(SABLE_USER_ID)} status=unknown`);
-        return "unknown";
-    }
-    try {
-        // Presence is a gateway/cache property, not a reliable REST member field.
-        const cached = guild.members.cache.get(SABLE_USER_ID);
-        const member = cached || await guild.members.fetch(SABLE_USER_ID);
-        const status = member?.presence?.status || guild.presences.cache.get(SABLE_USER_ID)?.status;
-        const resolved = ["online", "idle", "dnd", "offline"].includes(status) ? status : "unknown";
-        console.log(`[sable-presence] member_found=${Boolean(member)} cached=${Boolean(cached)} status=${resolved}`);
-        return resolved;
-    } catch (error) {
-        console.warn("[sable-presence] lookup failed:", error.message);
-        return "unknown";
-    }
-}
-
-function lazyRedirect(status) {
-    // Local refusal when Sable is not online. No model call.
-    const replies = {
-        online: [
-            "The librarian's at her desk. Ask Sable — I'm busy being unemployed. 🎮",
-            "Sable's around. Take your homework to the hippie librarian; I'm off duty. 😈",
-        ],
-        idle: [
-            "The librarian's out to lunch. I'm not covering her shift. 🎮",
-            "Sable's taking a break. Library hours are not my problem. 😴",
-        ],
-        dnd: ["Library's got a DO NOT DISTURB sign up. I'm not the substitute teacher. 🎮"],
-        offline: ["Library's closed. No, I don't do homework either. 😈"],
-        unknown: ["Can't tell if the librarian's in. Either way, I'm not doing homework. 🎮"],
-    };
-    const options = replies[status] || replies.unknown;
-    return options[Math.floor(Math.random() * options.length)];
+// Write a fresh, in-character handoff using Vesper's model, not a phrase pool.
+async function generateSableHandoff(username, question) {
+    const name = String(username || "someone").replace(/[@\r\n`]/g, "").slice(0, 40);
+    const response = await openai.chat.completions.create({
+        model: "gpt-5.5",
+        max_completion_tokens: 180,
+        messages: [
+            {
+                role: "system",
+                content: "You are Vesper, a snarky, lazy Discord gamer with a distinctive, playful voice. " +
+                    "A person has asked a factual/help question and Sable, the hippie librarian bot, is online. " +
+                    "Write ONE short, original, context-specific handoff line to Sable in your own voice. " +
+                    "React to the actual topic, not a generic referral. Be funny but not cruel. " +
+                    "Address Sable naturally by name, and optionally address the person by name. " +
+                    "Do not answer the question. Do not quote or repeat the question. " +
+                    "Do not write an @mention, Discord markup, a label, or a list. " +
+                    "Keep it to one or two brief sentences, under 250 characters."
+            },
+            {
+                role: "user",
+                content: `Person: ${name}\nQuestion: ${question}`
+            }
+        ]
+    });
+    const generated = String(response.choices?.[0]?.message?.content || "")
+        .replace(/<@!?\d+>|@everyone|@here/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+    if (!generated) throw new Error("Empty handoff generation");
+    return generated;
 }
 
 const openai =
@@ -1587,7 +1589,7 @@ client.on(
 
         /*
          * ------------------------------------------------
-         * ZERO-API HELP HANDOFF (ONLINE ONLY)
+         * GENERATED HELP HANDOFF (ONLINE ONLY)
          * ------------------------------------------------
          */
         const helpRequest = !message.author.bot && !messageIsMedia && !postedUrl &&
@@ -1603,15 +1605,24 @@ client.on(
                 // Avoid forwarding mass mentions or arbitrary user mentions.
                 const question = cleanedContent
                     .replace(/<@!?\d+>|<@&\d+>|@everyone|@here/g, "")
+                    // Removing the wake name can leave a leading comma or quote.
+                    .replace(/^[\s,.:;!\-–—"“”'‘’]+/, "")
                     .trim()
                     .slice(0, 1500)
                     .replace(/\n/g, "\n> ");
 
+                let intro;
+                try {
+                    intro = await generateSableHandoff(message.author.username, question);
+                } catch (error) {
+                    console.error("[help-gate] handoff phrasing failed:", error.message);
+                    intro = "Sable, this one is yours. I'm going back to my game.";
+                }
                 await message.reply({
-                    content: `<@${SABLE_USER_ID}> Got one for the library from ${message.author.username}:\n> ${question}`,
+                    content: `<@${SABLE_USER_ID}> ${intro}\n> ${question}`,
                     allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
                 });
-                console.log(`[help-gate] handoff=true api-call=false sable=${status}`);
+                console.log(`[help-gate] handoff=true api-call=generated sable=${status}`);
                 return;
             }
 
