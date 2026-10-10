@@ -1213,6 +1213,138 @@ async function isReplyToVesper(
 
 /*
  * -------------------------------------------------------
+ * V9 LOCAL BOT ENGAGEMENTS (not GhostPixel)
+ * -------------------------------------------------------
+ * Each process tracks its own engagement. No shared state or turn controller.
+ * The other bot must independently implement compatible limits to guarantee
+ * a room-wide cap; Vesper enforces its own outgoing messages here.
+ */
+const v9Engagements = new Map();
+const V9_ENGAGEMENT_TTL_MS = 3 * 60 * 1000;
+const V9_MAX_TRACKED_CHANNELS = 100;
+
+function v9AddressedByHuman(message, vesperId) {
+    if (message.author.bot) return false;
+    return /\b(?:vesper|sable)\b/i.test(message.content) ||
+        message.mentions.users.has(vesperId) ||
+        (Boolean(SABLE_USER_ID) && message.mentions.users.has(SABLE_USER_ID));
+}
+
+function v9ResetForHuman(message) {
+    const prior = v9Engagements.get(message.channelId);
+    if (prior) prior.cancelled = true;
+    const topic = message.content.replace(/<@!?\d+>/g, " ").trim().slice(0, 500);
+    const session = {
+        rootId: message.id,
+        topic,
+        origin: "human",
+        maxTurns: 5,
+        turnsUsed: 0,
+        active: false, // waiting for Sable to explicitly engage Vesper
+        cancelled: false,
+        expiresAt: Date.now() + V9_ENGAGEMENT_TTL_MS,
+    };
+    v9Engagements.set(message.channelId, session);
+    if (v9Engagements.size > V9_MAX_TRACKED_CHANNELS) {
+        const oldest = v9Engagements.keys().next().value;
+        v9Engagements.delete(oldest);
+    }
+    console.log(`[v9-engagement] human interruption/new root=${message.id}`);
+}
+
+async function v9HandleBotEngagement(message, client) {
+    // Only Sable can start/continue this Vesper-side dialogue. Never respond
+    // to arbitrary bot mentions, and never auto-start from unaddressed posts.
+    if (!SABLE_USER_ID || message.author.id !== SABLE_USER_ID || !message.guild) return false;
+    if (!message.mentions.users.has(client.user.id)) return false;
+    let session = v9Engagements.get(message.channelId);
+    const now = Date.now();
+    if (session && (session.cancelled || session.expiresAt <= now)) {
+        v9Engagements.delete(message.channelId);
+        session = null;
+    }
+    if (!session) {
+        session = {
+            rootId: message.id,
+            topic: message.content.replace(/<@!?\d+>/g, " ").trim().slice(0, 500),
+            origin: "bot",
+            maxTurns: 10,
+            turnsUsed: 0,
+            active: true,
+            cancelled: false,
+            expiresAt: now + V9_ENGAGEMENT_TTL_MS,
+        };
+        v9Engagements.set(message.channelId, session);
+    }
+    if (session.turnsUsed >= session.maxTurns) {
+        v9Engagements.delete(message.channelId);
+        console.log("[v9-engagement] turn limit reached");
+        return true;
+    }
+    // A bot message counts as one turn; so does Vesper's reply.
+    // Guard the cap before generation and before sending.
+    if (session.turnsUsed + 2 > session.maxTurns) {
+        v9Engagements.delete(message.channelId);
+        console.log("[v9-engagement] insufficient turns for another pair");
+        return true;
+    }
+    const generationRoot = session.rootId;
+    const inbound = message.content.replace(/<@!?\d+>/g, " ").trim();
+    session.turnsUsed += 1;
+    session.active = true;
+    session.expiresAt = Date.now() + V9_ENGAGEMENT_TTL_MS;
+    const stillCurrent = () => v9Engagements.get(message.channelId) === session &&
+        !session.cancelled && session.rootId === generationRoot &&
+        session.expiresAt > Date.now();
+    try {
+        await message.channel.sendTyping();
+        const response = await openai.chat.completions.create({
+            model: "gpt-5.5",
+            messages: [
+                { role: "system", content:
+                    "You are Vesper, a snarky gamer chatting with Sable in Discord. " +
+                    `The ORIGINAL subject is: ${session.topic}. ` +
+                    `Conversation origin: ${session.origin}; maximum bot messages: ${session.maxTurns}. ` +
+                    "Respond only if Sable's latest message is substantively relevant to that original subject. " +
+                    "If it changes subjects, repeats a settled point, has naturally concluded, " +
+                    "or you have nothing worthwhile to add, output exactly [END]. " +
+                    "Never introduce a fresh subject, ask generic continuation questions, or do factual research. " +
+                    "Stay in character, react naturally and briefly (one or two sentences). " +
+                    "Do not include Discord mentions, role tags, or system explanations. " +
+                    "Ending early is encouraged; the turn count is a ceiling, not a goal." },
+                { role: "user", content: `Sable says: ${inbound}` },
+            ],
+            max_completion_tokens: 220,
+        });
+        const output = (response.choices?.[0]?.message?.content || "").trim();
+        if (!stillCurrent()) {
+            console.log("[v9-engagement] cancelled while generating; suppressing response");
+            return true;
+        }
+        if (!output || /^\[END\]/i.test(output)) {
+            v9Engagements.delete(message.channelId);
+            console.log("[v9-engagement] natural/topic end");
+            return true;
+        }
+        const safeOutput = output.replace(/<@!?\d+>/g, "").replace(/@(?:Sable|Vesper)\b/gi, "").trim().slice(0, 1750);
+        if (!safeOutput) return true;
+        await message.reply({
+            content: `<@${SABLE_USER_ID}> ${safeOutput}`,
+            allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
+        });
+        session.turnsUsed += 1;
+        session.expiresAt = Date.now() + V9_ENGAGEMENT_TTL_MS;
+        if (session.turnsUsed >= session.maxTurns) v9Engagements.delete(message.channelId);
+        console.log(`[v9-engagement] origin=${session.origin} turns=${session.turnsUsed}/${session.maxTurns}`);
+    } catch (error) {
+        console.error("[v9-engagement] generation failed:", error.message);
+        v9Engagements.delete(message.channelId);
+    }
+    return true;
+}
+
+/*
+ * -------------------------------------------------------
  * DISCORD READY
  * -------------------------------------------------------
  */
@@ -1302,6 +1434,28 @@ client.on(
             return;
         }
 
+
+        /*
+         * V9: human takes the floor immediately, even if Vesper is not
+         * the addressed bot. A fresh human topic supersedes old dialogue.
+         * Explicit "stop" addressed to either bot terminates without
+         * creating a fresh bot engagement.
+         */
+        if (v9AddressedByHuman(message, client.user.id)) {
+            const prior = v9Engagements.get(message.channelId);
+            if (prior) prior.cancelled = true;
+            if (/\b(?:stop|shut up|enough|quit|silence)\b/i.test(message.content)) {
+                v9Engagements.delete(message.channelId);
+                console.log("[v9-engagement] human stop");
+            } else {
+                v9ResetForHuman(message);
+            }
+        }
+        if (message.author.bot && message.author.id === SABLE_USER_ID &&
+            message.mentions.users.has(client.user.id)) {
+            await v9HandleBotEngagement(message, client);
+            return;
+        }
 
         /*
          * ------------------------------------------------
