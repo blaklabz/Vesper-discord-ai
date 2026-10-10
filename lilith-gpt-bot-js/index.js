@@ -141,6 +141,48 @@ function isObviousHelpRequest(content) {
     return factualQuestion && !personalOrGaming;
 }
 
+// Two-stage routing: obvious requests use local rules; ambiguous text gets
+// a small classification call. A failed classification stays with Vesper.
+function isClearlyVesperConversation(content) {
+    const text = String(content || "").trim();
+    return /^(?:(?:hey|yo|okay|so)[,\s]+)*(?:what(?:'s| is) your (?:favorite|opinion)|what do you think|how do you feel|do you like|how are you|what are you doing|are you playing|have you played|tell me a joke|good (?:morning|night)|hello|hi\b|thanks?\b|lol\b|lmao\b)/i.test(text) ||
+        /\b(?:what do you think (?:of|about)|your thoughts on|your favorite|would you play|have you played)\b/i.test(text);
+}
+
+async function classifyHelpRequest(content) {
+    const text = String(content || "").trim();
+    if (!text || isClearlyVesperConversation(text)) return { route: "VESPER", source: "local-social" };
+    if (isObviousHelpRequest(text)) return { route: "SABLE", source: "local-help" };
+
+    try {
+        const result = await openai.chat.completions.create({
+            model: "gpt-5.5",
+            max_completion_tokens: 120,
+            messages: [
+                { role: "system", content:
+                    "Classify a message addressed to Vesper, a Discord gaming companion. " +
+                    "Reply with exactly SABLE or VESPER, nothing else. " +
+                    "SABLE: requests for factual information, definitions, explanations, calculations, " +
+                    "history, geography, science, research, instructions, advice, coding or other assistance. " +
+                    "Examples: 'why did Egyptians use beer as currency?', 'what is the capital of Monaco?', " +
+                    "'what about Alaska?' when asking capitals, 'how does an Alcubierre drive work?'. " +
+                    "VESPER: greetings, jokes, opinions, banter, gaming discussions, personal preferences, " +
+                    "asking what Vesper thinks or is doing, and commands to play/queue/review games. " +
+                    "Examples: 'what is your favorite game?', 'what do you think about Quake?', " +
+                    "'you are a lazy goblin', 'play Balatro'. " +
+                    "For ambiguous messages, choose VESPER so conversation stays natural."
+                },
+                { role: "user", content: text.slice(0, 1400) }
+            ]
+        });
+        const answer = String(result.choices?.[0]?.message?.content || "").trim().toUpperCase();
+        return { route: answer === "SABLE" ? "SABLE" : "VESPER", source: "model" };
+    } catch (error) {
+        console.warn("[help-router] classifier failed, keeping local:", error.message);
+        return { route: "VESPER", source: "fallback" };
+    }
+}
+
 async function sableAvailability(guild) {
     if (!guild || !SABLE_USER_ID) {
         console.log(`[sable-presence] guild=${Boolean(guild)} configured=${Boolean(SABLE_USER_ID)} status=unknown`);
@@ -1630,9 +1672,13 @@ client.on(
          * GENERATED HELP HANDOFF (ONLINE ONLY)
          * ------------------------------------------------
          */
-        const helpRequest = !message.author.bot && !messageIsMedia && !postedUrl &&
-            isObviousHelpRequest(cleanedContent);
-        console.log(`[help-gate] matched=${helpRequest} media=${messageIsMedia} url=${Boolean(postedUrl)}`);
+        const eligibleForHelp = !message.author.bot && !messageIsMedia && !postedUrl &&
+            Boolean(cleanedContent.trim());
+        const decision = eligibleForHelp
+            ? await classifyHelpRequest(cleanedContent)
+            : { route: "VESPER", source: "excluded" };
+        const helpRequest = decision.route === "SABLE";
+        console.log(`[help-gate] matched=${helpRequest} source=${decision.source} media=${messageIsMedia} url=${Boolean(postedUrl)}`);
         if (helpRequest) {
             wakeEngaged(client, "help-handoff");
             const status = await sableAvailability(message.guild);
