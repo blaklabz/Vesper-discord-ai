@@ -109,7 +109,7 @@ const ADMIN_USER_IDS =
 /*
  * Cheap, deliberately conservative no-help gate.
  * Only explicit requests are intercepted; ordinary conversation and game
- * commands keep their existing routing. No OpenAI call for matched requests.
+ * commands keep their existing routing. Online handoffs generate one LLM intro.
  */
 function isObviousHelpRequest(content) {
     const text = content.replace(/<@!?\d+>/g, " ").replace(/\bvesper\b[:,]?/gi, " ").trim();
@@ -139,6 +139,44 @@ function isObviousHelpRequest(content) {
     const personalOrGaming = /\b(?:you|your|yours|vesper|we|us|our|i|me|my|mine)\b/i.test(text) ||
         /\b(?:game|gaming|video games?|quake|balatro|valheim|steam|xbox|playstation|nintendo|gta|elden ring|minecraft|boss fight|level up)\b/i.test(text);
     return factualQuestion && !personalOrGaming;
+}
+
+async function sableAvailability(guild) {
+    if (!guild || !SABLE_USER_ID) {
+        console.log(`[sable-presence] guild=${Boolean(guild)} configured=${Boolean(SABLE_USER_ID)} status=unknown`);
+        return "unknown";
+    }
+    try {
+        // Presence is a gateway/cache property, not a reliable REST member field.
+        const cached = guild.members.cache.get(SABLE_USER_ID);
+        const member = cached || await guild.members.fetch(SABLE_USER_ID);
+        const status = member?.presence?.status || guild.presences.cache.get(SABLE_USER_ID)?.status;
+        const resolved = ["online", "idle", "dnd", "offline"].includes(status) ? status : "unknown";
+        console.log(`[sable-presence] member_found=${Boolean(member)} cached=${Boolean(cached)} status=${resolved}`);
+        return resolved;
+    } catch (error) {
+        console.warn("[sable-presence] lookup failed:", error.message);
+        return "unknown";
+    }
+}
+
+function lazyRedirect(status) {
+    // Never ping Sable. Keep responses local and cheap.
+    const replies = {
+        online: [
+            "The librarian's at her desk. Ask Sable — I'm busy being unemployed. 🎮",
+            "Sable's around. Take your homework to the hippie librarian; I'm off duty. 😈",
+        ],
+        idle: [
+            "The librarian's out to lunch. I'm not covering her shift. 🎮",
+            "Sable's taking a break. Library hours are not my problem. 😴",
+        ],
+        dnd: ["Library's got a DO NOT DISTURB sign up. I'm not the substitute teacher. 🎮"],
+        offline: ["Library's closed. No, I don't do homework either. 😈"],
+        unknown: ["Can't tell if the librarian's in. Either way, I'm not doing homework. 🎮"],
+    };
+    const options = replies[status] || replies.unknown;
+    return options[Math.floor(Math.random() * options.length)];
 }
 
 // Write a fresh, in-character handoff using Vesper's model, not a phrase pool.
