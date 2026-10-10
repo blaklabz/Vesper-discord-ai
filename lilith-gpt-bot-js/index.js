@@ -75,7 +75,7 @@ const client =
     });
 
 
-const SABLE_USER_ID = process.env.Sable_user_id || "";
+const SABLE_USER_ID = process.env.SABLE_USER_ID || "";
 
 const FREESTUFF_BOT_ID =
     process.env.FREESTUFF_BOT_ID;
