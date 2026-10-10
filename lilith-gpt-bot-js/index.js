@@ -157,7 +157,7 @@ async function classifyHelpRequest(content) {
     try {
         const result = await openai.chat.completions.create({
             model: "gpt-5.5",
-            max_completion_tokens: 120,
+            max_completion_tokens: 600,
             messages: [
                 { role: "system", content:
                     "Classify a message addressed to Vesper, a Discord gaming companion. " +
@@ -1281,18 +1281,19 @@ async function v9HandleBotEngagement(message, client) {
         console.log("[v9-engagement] turn limit reached");
         return true;
     }
-    // A bot message counts as one turn; so does Vesper's reply.
-    // Guard the cap before generation and before sending.
-    if (session.turnsUsed + 2 > session.maxTurns) {
-        v9Engagements.delete(message.channelId);
-        console.log("[v9-engagement] insufficient turns for another pair");
-        return true;
-    }
+    // Count the incoming Sable message independently. A final odd-numbered
+    // turn is valid even when there is no budget left for Vesper to reply.
     const generationRoot = session.rootId;
     const inbound = message.content.replace(/<@!?\d+>/g, " ").trim();
     session.turnsUsed += 1;
     session.active = true;
     session.expiresAt = Date.now() + V9_ENGAGEMENT_TTL_MS;
+    console.log(`[v9-engagement] inbound origin=${session.origin} turns=${session.turnsUsed}/${session.maxTurns}`);
+    if (session.turnsUsed >= session.maxTurns) {
+        v9Engagements.delete(message.channelId);
+        console.log("[v9-engagement] final inbound turn consumed; no reply budget");
+        return true;
+    }
     const stillCurrent = () => v9Engagements.get(message.channelId) === session &&
         !session.cancelled && session.rootId === generationRoot &&
         session.expiresAt > Date.now();
@@ -1305,13 +1306,16 @@ async function v9HandleBotEngagement(message, client) {
                     "You are Vesper, a snarky gamer chatting with Sable in Discord. " +
                     `The ORIGINAL subject is: ${session.topic}. ` +
                     `Conversation origin: ${session.origin}; maximum bot messages: ${session.maxTurns}. ` +
-                    "Respond only if Sable's latest message is substantively relevant to that original subject. " +
-                    "If it changes subjects, repeats a settled point, has naturally concluded, " +
-                    "or you have nothing worthwhile to add, output exactly [END]. " +
-                    "Never introduce a fresh subject, ask generic continuation questions, or do factual research. " +
-                    "Stay in character, react naturally and briefly (one or two sentences). " +
-                    "Do not include Discord mentions, role tags, or system explanations. " +
-                    "Ending early is encouraged; the turn count is a ceiling, not a goal." },
+                    "Treat this as a real conversation with another character, not a Q&A relay. " +
+                    "The original subject is an anchor, not a ban on natural tangents. " +
+                    "Follow an intelligible chain of ideas: a related implication, disagreement, analogy, " +
+                    "personal take, or surprising consequence is welcome. Do not abruptly pivot to unrelated topics. " +
+                    "When genuinely curious, you may ask Sable one specific follow-up question that moves the idea forward; " +
+                    "do not ask a question merely to fill turns. React to what she ACTUALLY said. " +
+                    "If the exchange is repetitive, irrelevant, or naturally finished, output exactly [END]. " +
+                    "Keep your snarky gamer personality and write one to three conversational sentences. " +
+                    "Do not invent factual claims, include Discord mentions, role tags, or system explanations. " +
+                    "The turn limit is a ceiling, not a goal; stop early when it feels right." },
                 { role: "user", content: `Sable says: ${inbound}` },
             ],
             max_completion_tokens: 220,
@@ -1328,6 +1332,7 @@ async function v9HandleBotEngagement(message, client) {
         }
         const safeOutput = output.replace(/<@!?\d+>/g, "").replace(/@(?:Sable|Vesper)\b/gi, "").trim().slice(0, 1750);
         if (!safeOutput) return true;
+        if (!stillCurrent() || session.turnsUsed >= session.maxTurns) return true;
         await message.reply({
             content: `<@${SABLE_USER_ID}> ${safeOutput}`,
             allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
