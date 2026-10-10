@@ -1419,6 +1419,46 @@ client.on(
                 message.content
             );
 
+        /*
+         * MULTI-BOT ADDRESSING (v8.1)
+         * First addressed bot owns the initial turn, unless the human
+         * explicitly invites both. A shared invitation never triggers a
+         * second Sable ping or forwarded copy of the original message.
+         */
+        const botAddressTokens = [];
+        const addressPattern = /<@!?(\d+)>|\b(sable|vesper)\b/gi;
+        for (const match of message.content.matchAll(addressPattern)) {
+            const id = match[1];
+            const name = match[2]?.toLowerCase();
+            const target = id
+                ? (id === client.user.id ? "VESPER" : id === SABLE_USER_ID ? "SABLE" : null)
+                : name?.toUpperCase();
+            if (target) botAddressTokens.push({ target, index: match.index, end: match.index + match[0].length });
+        }
+        const firstAddressedBot = botAddressTokens[0]?.target || null;
+        const bothBotsNamed = botAddressTokens.some((token) => token.target === "VESPER") &&
+            botAddressTokens.some((token) => token.target === "SABLE");
+        // A paired greeting at the start ("Sable, Vesper ...") or an
+        // explicit "both" invitation constitutes a shared request. A name
+        // embedded later in the question does not transfer ownership.
+        const pairedGreeting = botAddressTokens.length >= 2 &&
+            botAddressTokens[0].target !== botAddressTokens[1].target &&
+            message.content.slice(0, botAddressTokens[0].index).trim().length === 0 &&
+            /^[\s,;:&+\/\-]*(?:and\s+)?$/i.test(
+                message.content.slice(botAddressTokens[0].end, botAddressTokens[1].index)
+            );
+        const explicitBothRequest = bothBotsNamed && (
+            pairedGreeting ||
+            /\b(?:you\s+both|both\s+of\s+you|both\s+bots|you\s+two|the\s+two\s+of\s+you|each\s+of\s+you)\b/i.test(message.content)
+        );
+        if (firstAddressedBot === "SABLE" && !explicitBothRequest) {
+            console.log("[bot-routing] owner=SABLE shared=false action=ignore");
+            return;
+        }
+        if (bothBotsNamed) {
+            console.log(`[bot-routing] owner=${firstAddressedBot} shared=${explicitBothRequest} action=${explicitBothRequest ? "independent-response" : "first-bot-owns"}`);
+        }
+
 
         const isBroadcast =
             message.content.includes(
@@ -1690,7 +1730,7 @@ client.on(
          * GENERATED HELP HANDOFF (ONLINE ONLY)
          * ------------------------------------------------
          */
-        const eligibleForHelp = !message.author.bot && !messageIsMedia && !postedUrl &&
+        const eligibleForHelp = !explicitBothRequest && !message.author.bot && !messageIsMedia && !postedUrl &&
             Boolean(cleanedContent.trim());
         const decision = eligibleForHelp
             ? await classifyHelpRequest(cleanedContent)
@@ -1952,9 +1992,17 @@ client.on(
 
 
             const sableStatus = await sableAvailability(message.guild);
-            const librarianContext =
-                `SABLE PRESENCE: ${sableStatus}. The local help gate may summon Sable only when she is online. Do not @mention Sable in model-generated responses. ` +
-                "When Sable is idle, busy, offline, or unknown, say the librarian is out to lunch, busy, or the library is closed; don't summon her. ";
+            const librarianContext = explicitBothRequest
+                ? "SHARED MULTI-BOT INVITATION: The human has ALREADY addressed both bots. " +
+                  "Give ONLY Vesper's independent contribution. NEVER address Sable directly, " +
+                  "never ping/mention her, never forward or repeat the question, and never ask her to answer. " +
+                  "Sable receives the human's original message independently. " +
+                  "If the question asks for factual knowledge, react to its specific subject with humor, " +
+                  "curiosity, or an opinion WITHOUT attempting a factual explanation or invented facts. " +
+                  "If it asks for opinions or banter, give your own opinion naturally. " +
+                  "Do not use canned phrases or a delegation sign-off. "
+                : `SABLE PRESENCE: ${sableStatus}. The local help gate may summon Sable only when she is online. Do not @mention Sable in model-generated responses. ` +
+                  "When Sable is idle, busy, offline, or unknown, say the librarian is out to lunch, busy, or the library is closed; don't summon her. ";
 
             const liveGame =
                 getCurrentGame();
@@ -2430,8 +2478,12 @@ client.on(
              * ------------------------------------------------
              */
 
-            const discordResponse =
-                await resolveOutboundMentions(
+            const discordResponse = explicitBothRequest
+                ? responseMessage
+                    .replace(/<@!?\d+>/g, "")
+                    .replace(/(^|\n)\s*@?Sable\s*[,!:—-]\s*/gi, "$1")
+                    .trim()
+                : await resolveOutboundMentions(
                     responseMessage,
                     message.guild
                 );
@@ -2465,15 +2517,17 @@ client.on(
                 if (
                     i === 0
                 ) {
-                    await message.reply(
-                        chunk
+                    await message.reply(explicitBothRequest
+                        ? { content: chunk, allowedMentions: { parse: [], repliedUser: false } }
+                        : chunk
                     );
 
                 } else {
                     await message
                         .channel
-                        .send(
-                            chunk
+                        .send(explicitBothRequest
+                            ? { content: chunk, allowedMentions: { parse: [] } }
+                            : chunk
                         );
                 }
             }
