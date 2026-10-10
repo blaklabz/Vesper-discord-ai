@@ -1463,6 +1463,35 @@ client.on(
         }
 
         /*
+         * V9.2 EARLY OWNERSHIP GATE
+         * Run before GhostPixel or any other responder. A human mentioning
+         * Vesper as the *object* of Sable's request is not addressing Vesper.
+         * Sable can subsequently mention Vesper to invite her into the chat.
+         */
+        if (!message.author.bot) {
+            const tokens = [];
+            const pattern = /<@!?(\d+)>|\b(sable|vesper)\b/gi;
+            for (const match of message.content.matchAll(pattern)) {
+                const target = match[1]
+                    ? (match[1] === client.user.id ? "VESPER" : match[1] === SABLE_USER_ID ? "SABLE" : null)
+                    : match[2]?.toUpperCase();
+                if (target) tokens.push({ target, index: match.index, end: match.index + match[0].length });
+            }
+            const first = tokens[0];
+            const bothNamed = tokens.some(t => t.target === "SABLE") && tokens.some(t => t.target === "VESPER");
+            const paired = tokens.length >= 2 &&
+                tokens[0].target !== tokens[1].target &&
+                message.content.slice(0, tokens[0].index).trim() === "" &&
+                /^[\s,;:&+\/\-]*(?:and\s+)?$/i.test(message.content.slice(tokens[0].end, tokens[1].index));
+            const explicitlyShared = bothNamed && (paired ||
+                /\b(?:you\s+both|both\s+of\s+you|both\s+bots|you\s+two|the\s+two\s+of\s+you|each\s+of\s+you)\b/i.test(message.content));
+            if (first?.target === "SABLE" && !explicitlyShared) {
+                console.log("[bot-routing] owner=SABLE shared=false action=ignore-early");
+                return;
+            }
+        }
+
+        /*
          * ------------------------------------------------
          * GHOSTPIXEL
          * ------------------------------------------------
