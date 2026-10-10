@@ -221,23 +221,27 @@ function lazyRedirect(status) {
     return options[Math.floor(Math.random() * options.length)];
 }
 
-// Write a fresh, in-character handoff using Vesper's model, not a phrase pool.
+// Vesper reacts to the question *before* naturally inviting Sable into the conversation.
+// The model writes the prose; the Discord mention is inserted by code, not by the model.
 async function generateSableHandoff(username, question) {
     const name = String(username || "someone").replace(/[@\r\n`]/g, "").slice(0, 40);
     const response = await openai.chat.completions.create({
         model: "gpt-5.5",
-        max_completion_tokens: 180,
+        max_completion_tokens: 260,
         messages: [
             {
                 role: "system",
-                content: "You are Vesper, a snarky, lazy Discord gamer with a distinctive, playful voice. " +
-                    "A person has asked a factual/help question and Sable, the hippie librarian bot, is online. " +
-                    "Write ONE short, original, context-specific handoff line to Sable in your own voice. " +
-                    "React to the actual topic, not a generic referral. Be funny but not cruel. " +
-                    "Address Sable naturally by name, and optionally address the person by name. " +
-                    "Do not answer the question. Do not quote or repeat the question. " +
-                    "Do not write an @mention, Discord markup, a label, or a list. " +
-                    "Keep it to one or two brief sentences, under 250 characters."
+                content: "You are Vesper, a witty, opinionated, snarky Discord gamer, not a help desk receptionist. " +
+                    "A person has asked a factual question and your friend Sable, the hippie librarian, is online. " +
+                    "FIRST genuinely engage with the particular question: react with curiosity, disbelief, playful skepticism, " +
+                    "a clever observation, or a game analogy if one naturally fits. Make the reader enjoy your reaction. " +
+                    "THEN, after your reaction, naturally invite Sable to explain it, in your own fresh words. " +
+                    "Write the literal token [SABLE] exactly once where you address her, AFTER your reaction. " +
+                    "Never write Sable's name separately, @Sable, or any Discord mention markup. " +
+                    "Do not give the factual answer; Sable will answer the question. " +
+                    "Do not restate the entire question. Avoid canned phrases, rote referrals, and repetitive structure. " +
+                    "Be entertaining, not mean-spirited. Usually 2-4 brief sentences, no more than 450 characters. " +
+                    "Output only Vesper's message, no labels or quotation marks."
             },
             {
                 role: "user",
@@ -245,13 +249,27 @@ async function generateSableHandoff(username, question) {
             }
         ]
     });
-    const generated = String(response.choices?.[0]?.message?.content || "")
+    let generated = String(response.choices?.[0]?.message?.content || "")
         .replace(/<@!?\d+>|@everyone|@here/g, "")
         .replace(/\s+/g, " ")
         .trim()
-        .slice(0, 300);
+        .slice(0, 650);
     if (!generated) throw new Error("Empty handoff generation");
-    return generated;
+    // Model may write @Sable or 'Sable' despite instructions. Normalize every
+    // variant to one placeholder, then force the address after the reaction.
+    generated = generated.replace(/\[\s*SABLE\s*\]|@?Sable\b/gi, "[SABLE]");
+    const segments = generated.split("[SABLE]");
+    if (segments.length > 1) {
+        const before = segments[0].trim();
+        const after = segments.slice(1).join(" ").replace(/\[SABLE\]/g, "").trim();
+        // If the model starts by summoning Sable, move that invitation after
+        // any substantive reaction; otherwise preserve its natural phrasing.
+        generated = before ? `${before}\n[SABLE]${after && /^[,.:;!?]/.test(after) ? "" : " "}${after}`.trim()
+            : `${after.replace(/^[,.:;!\s-]+/, "").trim()}\n[SABLE], your thoughts?`.trim();
+    } else {
+        generated = `${generated}\n[SABLE], take it from here.`;
+    }
+    return generated.replace("[SABLE]", `<@${SABLE_USER_ID}>`);
 }
 
 const openai =
@@ -1708,10 +1726,10 @@ client.on(
                         intro = await generateSableHandoff(message.author.username, question);
                     } catch (error) {
                         console.error("[help-gate] handoff phrasing failed:", error.message);
-                        intro = "Sable, this one is yours. I'm going back to my game.";
+                        intro = `Okay, that question has some serious side-quest energy.\n<@${SABLE_USER_ID}>, what do you make of it?`;
                     }
                     await message.reply({
-                        content: `<@${SABLE_USER_ID}> ${intro}\n> ${question}`,
+                        content: `${intro}\n> ${question}`,
                         allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
                     });
                 } finally {
