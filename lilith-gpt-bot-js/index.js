@@ -90,6 +90,9 @@ const CHANNELS = [
 const GENERAL_CHANNEL_ID =
     "516241218632548377";
 
+// One pending unsolicited media reaction per channel.
+const pendingMediaReactions = new Map();
+
 
 const ADMIN_USER_IDS =
     new Set(
@@ -1436,6 +1439,12 @@ client.on(
             message.author.id ===
                 client.user.id
         ) {
+            // If Vesper spoke about something newer, retire an older image reaction.
+            const pending = pendingMediaReactions.get(message.channelId);
+            if (pending && BigInt(message.id) > BigInt(pending.messageId)) {
+                pending.cancelled = true;
+                pendingMediaReactions.delete(message.channelId);
+            }
             return;
         }
 
@@ -2084,34 +2093,28 @@ client.on(
 
         /*
          * ------------------------------------------------
-         * GIF DELAY
+         * UNSOLICITED IMAGE / GIF REACTION DELAY
          * ------------------------------------------------
+         * Wait BEFORE composing, without blocking other Discord messages.
+         * Direct mentions, replies and DMs keep their normal response timing.
          */
-
-        const hasGif =
-            messageHasGif(
-                message
-            );
-
-
-        if (hasGif) {
-            const delay =
-                randomBetween(
-                    4000,
-                    8000
-                );
-
-
-            console.log(
-                `[vision] GIF detected; reacting in ${delay}ms`
-            );
-
-
-            await sleep(
-                delay
-            );
+        const unsolicitedMedia = messageIsMedia && !directInteraction &&
+            !message.author.bot;
+        let mediaReaction = null;
+        if (unsolicitedMedia) {
+            const prior = pendingMediaReactions.get(message.channelId);
+            if (prior) prior.cancelled = true;
+            mediaReaction = { messageId: message.id, cancelled: false };
+            pendingMediaReactions.set(message.channelId, mediaReaction);
+            const delay = randomBetween(0, 30000);
+            console.log(`[vision] Media reaction queued; delay=${delay}ms message=${message.id}`);
+            await sleep(delay);
+            if (mediaReaction.cancelled ||
+                pendingMediaReactions.get(message.channelId) !== mediaReaction) {
+                console.log(`[vision] Superseded media reaction ${message.id}`);
+                return;
+            }
         }
-
 
         /*
          * ------------------------------------------------
@@ -2643,6 +2646,12 @@ client.on(
             }
 
 
+            if (mediaReaction && (mediaReaction.cancelled ||
+                pendingMediaReactions.get(message.channelId) !== mediaReaction)) {
+                console.log(`[vision] Suppressed stale media response ${message.id}`);
+                return;
+            }
+
             /*
              * ------------------------------------------------
              * FINAL RESPONSE CHECK
@@ -2742,6 +2751,9 @@ client.on(
             }
 
         } finally {
+            if (mediaReaction && pendingMediaReactions.get(message.channelId) === mediaReaction) {
+                pendingMediaReactions.delete(message.channelId);
+            }
             clearInterval(
                 sendTypingInterval
             );
