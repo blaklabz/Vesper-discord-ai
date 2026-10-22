@@ -34,11 +34,17 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
     let handler, timer;
     const promise = new Promise((resolve, reject) => {
         handler = msg => {
-            if (msg.author?.id === GAMEKEEPER_BOT_ID) {
+            // Diagnostic: log all messages arriving in the command channel,
+            // even when the author ID does not match the configured bot ID.
+            if (msg.channelId === channelId || msg.author?.id === GAMEKEEPER_BOT_ID) {
                 console.log("[gamekeeper-debug]", {
+                    authorId: msg.author?.id,
+                    authorBot: msg.author?.bot,
                     channelId: msg.channelId,
                     expectedChannelId: channelId,
-                    content: msg.content,
+                    expectedBotId: GAMEKEEPER_BOT_ID,
+                    botIdMatches: msg.author?.id === GAMEKEEPER_BOT_ID,
+                    content: String(msg.content || "").slice(0, 500),
                 });
             }
             if (msg.author?.id !== GAMEKEEPER_BOT_ID || msg.channelId !== channelId) return;
