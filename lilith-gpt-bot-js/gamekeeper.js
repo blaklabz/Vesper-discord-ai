@@ -34,6 +34,13 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
     let handler, timer;
     const promise = new Promise((resolve, reject) => {
         handler = msg => {
+            if (msg.author?.id === GAMEKEEPER_BOT_ID) {
+                console.log("[gamekeeper-debug]", {
+                    channelId: msg.channelId,
+                    expectedChannelId: channelId,
+                    content: msg.content,
+                });
+            }
             if (msg.author?.id !== GAMEKEEPER_BOT_ID || msg.channelId !== channelId) return;
             const content = String(msg.content || "");
             if (!content.toLowerCase().includes(game.toLowerCase()) && !/controller error/i.test(content)) return;
