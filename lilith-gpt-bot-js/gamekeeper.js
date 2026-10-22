@@ -4,7 +4,12 @@
 const GAMEKEEPER_BOT_ID = process.env.GAMEKEEPER_BOT_ID || "1562610844603387914";
 const GAMEKEEPER_CHANNEL_ID = process.env.GAMEKEEPER_CHANNEL_ID || "1232029053452812329";
 const SABLE_USER_ID = process.env.SABLE_USER_ID || "";
-const ADMIN_USER_ID = (process.env.DISCORD_ADMIN_IDS || "").split(",").map(x => x.trim()).find(Boolean);
+// Dedicated alert recipient wins; otherwise choose a human admin, never a bot.
+const ADMIN_IDS = (process.env.DISCORD_ADMIN_IDS || "").split(",").map(x => x.trim()).filter(Boolean);
+const ADMIN_USER_ID = process.env.GAMEKEEPER_ADMIN_USER_ID ||
+    ADMIN_IDS.find(id => id === "195895553911947264") ||
+    ADMIN_IDS.find(id => id !== "1232035346531745956" && id !== GAMEKEEPER_BOT_ID && id !== SABLE_USER_ID) ||
+    "195895553911947264";
 const GAMES = ["core-keeper-2", "enshrouded", "shadowdark", "v-rising", "valheim", "windrose", "quake"];
 const LABELS = { "core-keeper-2": "Core Keeper 2", "v-rising": "V Rising", enshrouded: "Enshrouded", shadowdark: "Shadowdark", valheim: "Valheim", windrose: "Windrose", quake: "Quake" };
 const busy = new Set();
@@ -134,26 +139,26 @@ async function command(client, channel, action, game) {
 }
 
 function formatInventory(raw) {
-    const rows = [];
-    const text = String(raw || "");
-    for (const line of text.split(/\r?\n/)) {
-        const match = line.match(/(?:^|\s|[•*`])(?:core[ -]?keeper(?:[ -]?2)?|v[ -]?rising|enshrouded|shadowdark|valheim|windrose|quake)\s*[:—-]\s*(running|stopped)\b[^\n]*/i);
+    const rows = new Map();
+    for (const line of String(raw || "").split(/\r?\n/)) {
+        // Gamekeeper's !games output is whitespace-separated, not colon-separated.
+        // Example: "core-keeper-2  stopped  on-demand"
+        const match = line.trim().match(/^(core-keeper-2|enshrouded|shadowdark|v-rising|valheim|windrose|quake)\s+(running|stopped)\s+(always-on|on-demand)\s*$/i);
         if (!match) continue;
-        const name = match[0].match(/core[ -]?keeper(?:[ -]?2)?|v[ -]?rising|enshrouded|shadowdark|valheim|windrose|quake/i)?.[0];
-        const canonical = name && GAMES.find(game => game.replace(/-/g, "") === name.toLowerCase().replace(/[ -]/g, ""));
-        if (!canonical || rows.some(row => row.game === canonical)) continue;
-        const state = match[1].toLowerCase();
-        const mode = /always[ -]?on/i.test(line) ? "Always-on" : /on[ -]?demand/i.test(line) ? "On-demand" : "Mode unknown";
-        rows.push({ game: canonical, text: `${state === "running" ? "🟢" : "⚫"} **${LABELS[canonical]}** — ${state === "running" ? "Running" : "Stopped"} | ${mode}` });
+        const [, name, stateRaw, modeRaw] = match;
+        const game = name.toLowerCase();
+        const state = stateRaw.toLowerCase();
+        const mode = modeRaw.toLowerCase() === "always-on" ? "Always-on" : "On-demand";
+        rows.set(game, `${state === "running" ? "🟢" : "⚫"} **${LABELS[game]}** — ${state === "running" ? "Running" : "Stopped"} | ${mode}`);
     }
-    if (rows.length !== GAMES.length) {
-        throw new Error(`Incomplete Gamekeeper inventory (${rows.length}/${GAMES.length}); refusing to invent missing statuses`);
+    if (rows.size !== GAMES.length) {
+        throw new Error(`Incomplete Gamekeeper inventory (${rows.size}/${GAMES.length}); refusing to invent missing statuses`);
     }
-    return GAMES.map(game => rows.find(row => row.game === game).text).join("\n");
+    return GAMES.map(game => rows.get(game)).join("\n");
 }
 
 async function notifyAdmin(client, detail) {
-    if (!ADMIN_USER_ID || ADMIN_USER_ID === client.user?.id) return false;
+    if (!ADMIN_USER_ID || ADMIN_USER_ID === client.user?.id || ADMIN_USER_ID === GAMEKEEPER_BOT_ID || ADMIN_USER_ID === SABLE_USER_ID) return false;
     try {
         const user = await client.users.fetch(ADMIN_USER_ID);
         await user.send({ content: `🎮 Vesper / Gamekeeper: ${detail}`, allowedMentions: { parse: [] } });
