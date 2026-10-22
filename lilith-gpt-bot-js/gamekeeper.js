@@ -71,7 +71,7 @@ async function notifyAdmin(client, detail) {
 }
 
 async function handle({ message, client, sableAvailability, openai }) {
-    if (message.author.bot || !message.guild || message.channelId !== GAMEKEEPER_CHANNEL_ID) return false;
+    if (message.author.bot || !message.guild) return false;
     const addressed = message.mentions.users.has(client.user.id) || /\bvesper\b/i.test(message.content);
     if (!addressed) return false;
     const request = parseRequest(message.content);
