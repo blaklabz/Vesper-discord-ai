@@ -102,8 +102,12 @@ function parseRequest(content) {
         ["ondemand", /\b(on[ -]?demand)\b/i],
     ];
     const action = actions.find(([, pattern]) => pattern.test(text))?.[0];
-    if (action === "status" || (!action && (inventoryQuestion || statusQuestion) &&
-        /\b(game|games|server|servers|inventory|roster|list)\b/i.test(text))) {
+    // Status words alone are conversational; only route them when the user
+    // actually refers to a game or the game-server infrastructure.
+    // e.g. "your new feature is online" must NOT trigger !games.
+    const inventoryContext = serverContext || /\b(?:game\s*servers?|games?|servers?|inventory|roster|gamekeeper)\b/i.test(text);
+    if (inventoryContext && (action === "status" ||
+        (!action && (inventoryQuestion || statusQuestion)))) {
         return { action: "inventory", game, specific: Boolean(game) };
     }
     if (!action) return serverContext && commandLike ? { action: "clarify", game } : null;
