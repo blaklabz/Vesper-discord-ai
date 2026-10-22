@@ -125,7 +125,7 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
 async function command(client, channel, action, game) {
     const waiting = waitForGamekeeper(client, channel.id, action === "list" ? "__inventory__" : game);
     try {
-        await channel.send({ content: action === "list" ? "!game list" : `!game ${action} ${game}`, allowedMentions: { parse: [] } });
+        await channel.send({ content: action === "list" ? "!games" : `!game ${action} ${game}`, allowedMentions: { parse: [] } });
         return await waiting.promise;
     } catch (error) {
         waiting.cancel();
