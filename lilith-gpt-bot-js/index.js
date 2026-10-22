@@ -43,6 +43,8 @@ const {
 const ghostpixel =
     require("./ghostpixel");
 
+const gamekeeper = require("./gamekeeper");
+
 
 const {
     initializePresence,
@@ -1499,6 +1501,10 @@ client.on(
                 return;
             }
         }
+
+        // Gamekeeper requests are handled before GhostPixel, help routing, and chat.
+        // Only explicit human requests addressed to Vesper in Gamekeeper's channel.
+        if (await gamekeeper.handle({ message, client, sableAvailability, openai })) return;
 
         /*
          * ------------------------------------------------
