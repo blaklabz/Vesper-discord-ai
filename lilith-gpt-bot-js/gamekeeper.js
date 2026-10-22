@@ -64,7 +64,7 @@ async function flourish(openai, kind, { label, action, detail = "", woke = false
         const result = await openai.chat.completions.create({
             model: "gpt-5.5", max_completion_tokens: 140,
             messages: [
-                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
+                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
                 { role: "user", content: `Event: ${kind}; game: ${label}; action: ${action}; verified detail: ${String(detail).slice(0, 350)}` },
             ],
         });
@@ -246,7 +246,7 @@ async function handle({ message, client, sableAvailability, openai }) {
         // Submit VM operations immediately, without waiting for the conversational delay.
         const result = await command(client, channel, "start", game);
         if (/⚠️|error|⛔/i.test(result)) throw new Error(result);
-        await reply(`${await voice("submitted", result)}\n${result}`);
+        await reply(await voice("submitted", "Gamekeeper accepted the start request; server readiness has not been confirmed."));
         return true;
     } catch (error) {
         console.error("[gamekeeper]", error);
