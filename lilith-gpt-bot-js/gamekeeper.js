@@ -55,24 +55,27 @@ const FALLBACK = {
     inventory: ["You wanted one server? Adorable. I fetched the entire crypt. Find it yourself.", "I refuse to be a personal server concierge. Here’s the whole collection.", "One status check? Please. I brought you the entire inventory. Use your eyeballs."],
     inventoryAll: ["The full roster, freshly dragged out of Gamekeeper:", "Here’s the state of the whole digital dungeon:", "I checked every server. Yes, all of them. Try to contain your awe."],
     handoff: ["Sable's awake, so I'm delegating this particular haunting.", "The librarian's on duty. She gets the server ritual.", "I'm passing this one to Sable before someone hands me more responsibility."],
+    clarify: ["I caught the game name, but the rest of that spell was gibberish. Start it, or what?", "Darling, those words are doing parkour. Which server action did you actually want?", "That sounded almost like a command. Try telling me what to do with the server."],
 };
 
 async function flourish(openai, kind, { label, action, detail = "", woke = false } = {}) {
     const fallback = choose(FALLBACK[kind] || FALLBACK.error);
-    if (!openai?.chat?.completions?.create) return fallback;
+    if (!openai?.chat?.completions?.create) { console.warn(`[gamekeeper] flourish fallback kind=${kind} reason=api_unavailable`); return fallback; }
     try {
         const result = await openai.chat.completions.create({
             model: "gpt-5.5", max_completion_tokens: 140,
             messages: [
-                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
+                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
                 { role: "user", content: `Event: ${kind}; game: ${label}; action: ${action}; verified detail: ${String(detail).slice(0, 350)}` },
             ],
         });
-        return String(result.choices?.[0]?.message?.content || "")
+        const generated = String(result.choices?.[0]?.message?.content || "")
             .replace(/<@!?\d+>|@everyone|@here|@sable/gi, "")
-            .replace(/[\r\n]+/g, " ").trim().slice(0, 180) || fallback;
+            .replace(/[\r\n]+/g, " ").trim().slice(0, 180);
+        if (!generated) console.warn(`[gamekeeper] flourish fallback kind=${kind} reason=empty_response`);
+        return generated || fallback;
     } catch (error) {
-        console.warn("[gamekeeper] flourish failed:", error.message);
+        console.warn(`[gamekeeper] flourish fallback kind=${kind} reason=api_error:`, error.message);
         return fallback;
     }
 }
@@ -88,9 +91,11 @@ function parseRequest(content) {
     // Status/inventory questions always return the complete inventory.
     const inventoryQuestion = /\b(list|inventory|roster|catalog|catalogue|which|what|show|all|available|servers?|games?)\b/i.test(text);
     const statusQuestion = /\b(status|running|online|up|down|active|stopped|state)\b/i.test(text);
+    const serverContext = Boolean(game) || /\b(game\s*servers?|servers?\s*(?:in\s*the\s*lab|on\s*the\s*lab|status|running)|gamekeeper|games?\s*(?:running|installed|available))\b/i.test(text);
+    const commandLike = /\b(start|stop|restart|reboot|boot|launch|shutdown|shut|turn|power|wake|spin|fire|bring|kill|spank|kick|poke|nudge|status|running|online|offline|list|inventory|roster|show|check)\b/i.test(text);
     const actions = [
-        ["start", /\b(start|boot|spin up|fire up|bring up|wake up|turn on|launch)\b/i],
-        ["stop", /\b(stop|shut down|shutdown|turn off|power off|kill)\b/i],
+        ["start", /\b(start|boot|spin up|fire up|bring up|wake up|turn\s+(?:(?:it|that|the\s+server|[\w-]+)\s+)?on|power\s+(?:(?:it|that|[\w-]+)\s+)?up|launch)\b/i],
+        ["stop", /\b(stop|shut down|shutdown|turn\s+(?:(?:it|that|the\s+server|[\w-]+)\s+)?off|power off|kill)\b/i],
         ["restart", /\b(restart|reboot)\b/i],
         ["status", /\b(status|running|online|up|down)\b/i],
         ["alwayson", /\b(always[ -]?on)\b/i],
@@ -101,8 +106,9 @@ function parseRequest(content) {
         /\b(game|games|server|servers|inventory|roster|list)\b/i.test(text))) {
         return { action: "inventory", game, specific: Boolean(game) };
     }
-    if (!action) return null;
-    return game ? { action, game } : null;
+    if (!action) return serverContext && commandLike ? { action: "clarify", game } : null;
+    if (!game) return serverContext && commandLike ? { action: "clarify", game: null } : null;
+    return { action, game };
 }
 
 function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
@@ -200,6 +206,14 @@ async function handle({ message, client, sableAvailability, openai }) {
     }
     busy.add(key);
     try {
+        if (action === "clarify") {
+            const line = await flourish(openai, "clarify", {
+                label, action, woke,
+                detail: `Original message: ${String(message.content).slice(0, 220)}. The intended operation is unclear. Gently roast the confusing wording and ask which action they meant. Do not imply you executed anything.`,
+            });
+            await reply(line);
+            return true;
+        }
         // Inventory requests belong to Vesper even when Sable is online.
         if (action === "inventory") {
             const channel = await client.channels.fetch(GAMEKEEPER_CHANNEL_ID);
