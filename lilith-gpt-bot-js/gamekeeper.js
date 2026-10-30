@@ -74,6 +74,8 @@ const FALLBACK = {
     inventoryAll: ["The full roster, freshly dragged out of Gamekeeper:", "Here’s the state of the whole digital dungeon:", "I checked every server. Yes, all of them. Try to contain your awe."],
     shutdownVerified: ["The machines have been tucked into their crypts. I'm going back to the couch.", "Four AM. The servers are asleep. Some of you should try it.", "Gamekeeper did the responsible thing. Disgusting. I approve."],
     handoff: ["The librarian's on duty. She gets the server ritual."],
+    startConfirmed: ["{game} is awake and officially running. I dragged it out of the crypt; Gamekeeper checked the pulse.", "{game} has risen. The machinery confirms it, so I can return to doing absolutely nothing.", "The {game} server is running. My summoning ritual was flawless, obviously."],
+    stopConfirmed: ["{game} is safely asleep. Gamekeeper checked the lights; I get the couch back.", "The crypt has reclaimed {game}. Shutdown confirmed, no dramatic resurrection required.", "{game} is off and the rack is a little quieter. Beautiful."],
     handoffSuccess: ["{game} got its {action} orders. Sable handled the paperwork, Gamekeeper confirmed it, and I'm back on the couch.", "The librarian and the rack goblin have settled {game}'s {action} business. My supervision was impeccable.", "{game}: {action} confirmed. Sable did the ritual; I provided the appropriate amount of dramatic disinterest."],
     handoffFailure: ["The {action} ritual for {game} didn't get a clean confirmation. Sable's report says something went wrong; I'm not calling it done.", "{game}'s {action} request hit a snag. No victory lap until the machinery actually confirms it."],
     clarify: ["I caught the game name, but the rest of that spell was gibberish. Start it, or what?", "Darling, those words are doing parkour. Which server action did you actually want?", "That sounded almost like a command. Try telling me what to do with the server."],
@@ -88,7 +90,7 @@ async function flourish(openai, kind, { label, action, detail = "", woke = false
         const result = await openai.chat.completions.create({
             model: "gpt-5.5", max_completion_tokens: 140,
             messages: [
-                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For handoffSuccess, the operation is confirmed: celebrate with one complete witty sentence, mentioning the game and what changed, without quoting Sable, adding report labels, or narrating a pending handoff. For handoffFailure, the operation is NOT confirmed: give one complete witty but accurate sentence, without implying success. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
+                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For startConfirmed, Gamekeeper verified the named game is running; for stopConfirmed, Gamekeeper verified it is stopped. For either, produce a fresh self-contained playful sentence about the confirmed state, never paste or quote raw Gamekeeper output. For handoffSuccess, the operation is confirmed: celebrate with one complete witty sentence, mentioning the game and what changed, without quoting Sable, adding report labels, or narrating a pending handoff. For handoffFailure, the operation is NOT confirmed: give one complete witty but accurate sentence, without implying success. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
                 { role: "user", content: `Event: ${kind}; game: ${label}; action: ${action}; verified detail: ${String(detail).slice(0, 350)}` },
             ],
         });
@@ -368,7 +370,7 @@ async function handle({ message, client, sableAvailability, openai }) {
             const result = await command(client, channel, "stop", game);
             if (terminalFailure(result)) throw new Error(result);
             if (!/(?:✅|confirmed|already)\b.*\bstopped\b|\bstopped\b.*(?:✅|confirmed|already)/i.test(result)) throw new Error(`Unconfirmed stop: ${result}`);
-            await reply(`💀 ${label} has been put to bed. Gamekeeper confirms the stop. ${result.slice(0, 500)}`);
+            await reply(`💀 ${await voice("stopConfirmed", result)}`);
             return true;
         }
         // Start and status are handled directly by Vesper, regardless of Sable's presence.
@@ -389,7 +391,7 @@ async function handle({ message, client, sableAvailability, openai }) {
         const result = await command(client, channel, "start", game);
         if (terminalFailure(result)) throw new Error(result);
         if (!/(?:✅|confirmed|already).*\b(?:started|running)\b|\b(?:started|running)\b.*(?:✅|confirmed|already)/i.test(result)) throw new Error(`Unconfirmed start: ${result}`);
-        await reply(`⚡ ${label} is awake. Gamekeeper confirms the VM is running. ${result.slice(0, 500)}`);
+        await reply(`⚡ ${await voice("startConfirmed", result)}`);
         return true;
     } catch (error) {
         console.error("[gamekeeper]", error);
