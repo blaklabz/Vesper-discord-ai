@@ -73,18 +73,22 @@ const FALLBACK = {
     inventory: ["You wanted one server? Adorable. I fetched the entire crypt. Find it yourself.", "I refuse to be a personal server concierge. Here’s the whole collection.", "One status check? Please. I brought you the entire inventory. Use your eyeballs."],
     inventoryAll: ["The full roster, freshly dragged out of Gamekeeper:", "Here’s the state of the whole digital dungeon:", "I checked every server. Yes, all of them. Try to contain your awe."],
     shutdownVerified: ["The machines have been tucked into their crypts. I'm going back to the couch.", "Four AM. The servers are asleep. Some of you should try it.", "Gamekeeper did the responsible thing. Disgusting. I approve."],
-    handoff: ["Sable's awake, so I'm delegating this particular haunting.", "The librarian's on duty. She gets the server ritual.", "I'm passing this one to Sable before someone hands me more responsibility."],
+    handoff: ["The librarian's on duty. She gets the server ritual."],
+    handoffSuccess: ["{game} got its {action} orders. Sable handled the paperwork, Gamekeeper confirmed it, and I'm back on the couch.", "The librarian and the rack goblin have settled {game}'s {action} business. My supervision was impeccable.", "{game}: {action} confirmed. Sable did the ritual; I provided the appropriate amount of dramatic disinterest."],
+    handoffFailure: ["The {action} ritual for {game} didn't get a clean confirmation. Sable's report says something went wrong; I'm not calling it done.", "{game}'s {action} request hit a snag. No victory lap until the machinery actually confirms it."],
     clarify: ["I caught the game name, but the rest of that spell was gibberish. Start it, or what?", "Darling, those words are doing parkour. Which server action did you actually want?", "That sounded almost like a command. Try telling me what to do with the server."],
 };
 
 async function flourish(openai, kind, { label, action, detail = "", woke = false } = {}) {
-    const fallback = choose(FALLBACK[kind] || FALLBACK.error);
+    const fallback = choose(FALLBACK[kind] || FALLBACK.error)
+        .replaceAll("{game}", label || "the server")
+        .replaceAll("{action}", ({ alwayson: "always-on", ondemand: "on-demand" })[action] || action || "operation");
     if (!openai?.chat?.completions?.create) { console.warn(`[gamekeeper] flourish fallback kind=${kind} reason=api_unavailable`); return fallback; }
     try {
         const result = await openai.chat.completions.create({
             model: "gpt-5.5", max_completion_tokens: 140,
             messages: [
-                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
+                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 180 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For handoffSuccess, the operation is confirmed: celebrate with one complete witty sentence, mentioning the game and what changed, without quoting Sable, adding report labels, or narrating a pending handoff. For handoffFailure, the operation is NOT confirmed: give one complete witty but accurate sentence, without implying success. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
                 { role: "user", content: `Event: ${kind}; game: ${label}; action: ${action}; verified detail: ${String(detail).slice(0, 350)}` },
             ],
         });
@@ -293,6 +297,19 @@ async function handle({ message, client, sableAvailability, openai }) {
         // The payload stays in #blaklabz; public chat gets prose and a result.
         if (["restart", "kill", "alwayson", "ondemand"].includes(action)) {
             if (!SABLE_USER_ID) throw new Error("Sable bot ID is not configured");
+            // Fail closed: a configured bot ID is not evidence Sable is connected.
+            // Discord idle/DND still mean connected; offline/unknown do not.
+            const sableStatus = typeof sableAvailability === "function"
+                ? await sableAvailability(message.guild).catch(error => {
+                    console.warn("[gamekeeper] Sable availability check failed:", error.message);
+                    return "unknown";
+                })
+                : "unknown";
+            if (!["online", "idle", "dnd"].includes(sableStatus)) {
+                console.log(`[gamekeeper] handoff blocked: Sable status=${sableStatus} action=${action} game=${game}`);
+                await reply("📚 The librarian is offline or unreachable. I won't send a privileged request into the void. Start, stop, and inventory still work without her.");
+                return true;
+            }
             const channel = await client.channels.fetch(GAMEKEEPER_CHANNEL_ID);
             if (!channel?.send) throw new Error("Gamekeeper operations channel unavailable");
             const reference = `https://discord.com/channels/${message.guild.id}/${message.channelId}/${message.id}`;
@@ -306,6 +323,16 @@ async function handle({ message, client, sableAvailability, openai }) {
                 `original=${reference}\n` +
                 `[/GAMEKEEPER_HANDOFF_V1]`;
             // Register before posting: Sable may respond faster than Vesper's typing delay.
+            // Recheck immediately before sending, in case Sable disconnected
+            // while the operations channel was being fetched.
+            const currentStatus = typeof sableAvailability === "function"
+                ? await sableAvailability(message.guild).catch(() => "unknown")
+                : "unknown";
+            if (!["online", "idle", "dnd"].includes(currentStatus)) {
+                console.log(`[gamekeeper] handoff aborted before send: Sable status=${currentStatus} action=${action} game=${game}`);
+                await reply("📚 Sable went offline before I could hand this over. Nothing was submitted.");
+                return true;
+            }
             const waiter = waitForSableResult(client, channel.id, action, game, message.id);
             try {
                 const posted = await channel.send({
@@ -316,11 +343,14 @@ async function handle({ message, client, sableAvailability, openai }) {
                 // Await the result directly. A slow typing/LLM acknowledgment can
                 // arrive after Sable finishes and misleadingly say "waiting".
                 const result = await waiter.promise;
-                if (terminalFailure(result) || /rejected|cannot verify|went quiet/i.test(result)) {
-                    await reply(`⚠️ Sable could not confirm ${action} for ${label}: ${result.slice(0, 600)}`);
-                } else {
-                    await reply(`${await voice("handoff")} 📚 Sable reports: ${result.slice(0, 900)}`);
-                }
+                const failed = terminalFailure(result) || /rejected|cannot verify|went quiet/i.test(result);
+                // The outcome comes from Sable's verified result, never the LLM.
+                // Give Vesper one complete personality-driven reply, not a canned
+                // prefix stitched to Sable's operational report.
+                const flavor = await voice(failed ? "handoffFailure" : "handoffSuccess", result);
+                await reply(failed
+                    ? `⚠️ ${flavor} (Not confirmed.)`
+                    : `✅ ${flavor}`);
             } catch (error) {
                 await reply(`⚠️ Sable hasn't confirmed ${action} for ${label}. Check #blaklabz before retrying; the operation may still have completed.`);
                 console.warn(`[gamekeeper] handoff result timeout action=${action} game=${game}: ${error.message}`);
