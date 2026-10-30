@@ -161,11 +161,13 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000, terminal 
 }
 
 async function command(client, channel, action, game) {
-    const terminal = action === "stop"
+    const terminal = action === "start"
+        ? body => terminalFailure(body) || /(?:✅|confirmed|already).*(?:started|running)|(?:started|running).*(?:✅|confirmed|already)/i.test(body)
+        : action === "stop"
         ? body => terminalFailure(body) || /(?:✅|confirmed|already)\b.*\bstopped\b|\bstopped\b.*(?:✅|confirmed|already)/i.test(body)
         : null;
     const waiting = waitForGamekeeper(client, channel.id, action === "list" ? "__inventory__" : game,
-        action === "stop" ? STOP_TIMEOUT_MS : 25000, terminal);
+        action === "stop" || action === "start" ? STOP_TIMEOUT_MS : 25000, terminal);
     try {
         await channel.send({ content: action === "list" ? "!games" : `!game ${action} ${game}`, allowedMentions: { parse: [] } });
         return await waiting.promise;
@@ -217,7 +219,11 @@ function waitForSableResult(client, channelId, action, game, afterId) {
             const body = String(msg.content || "");
             if (!/Gamekeeper|handoff rejected|cannot verify|went quiet/i.test(body)) return;
             if (!body.toLowerCase().includes(game.toLowerCase()) && !/handoff rejected/i.test(body)) return;
-            if (!body.toLowerCase().includes(action.toLowerCase()) && !/handoff rejected|went quiet/i.test(body)) return;
+            // Sable's final prose often omits the literal action (e.g. "The lights
+            // are out in Valheim. Gamekeeper verified the result."). Require the
+            // game and Gamekeeper, not an exact action word. The waiter is armed
+            // before the handoff is sent so fast replies cannot be missed.
+            if (!/Gamekeeper/i.test(body) && !/handoff rejected|cannot verify|went quiet/i.test(body)) return;
             cleanup();
             resolve(body);
         };
@@ -348,8 +354,9 @@ async function handle({ message, client, sableAvailability, openai }) {
         if (!/\bstopped\b/i.test(status)) throw new Error(`Unrecognized status: ${status}`);
         // Submit VM operations immediately, without waiting for the conversational delay.
         const result = await command(client, channel, "start", game);
-        if (/⚠️|error|⛔/i.test(result)) throw new Error(result);
-        await reply(await voice("submitted", "Gamekeeper accepted the start request; server readiness has not been confirmed."));
+        if (terminalFailure(result)) throw new Error(result);
+        if (!/(?:✅|confirmed|already).*\b(?:started|running)\b|\b(?:started|running)\b.*(?:✅|confirmed|already)/i.test(result)) throw new Error(`Unconfirmed start: ${result}`);
+        await reply(`⚡ ${label} is awake. Gamekeeper confirms the VM is running. ${result.slice(0, 500)}`);
         return true;
     } catch (error) {
         console.error("[gamekeeper]", error);
