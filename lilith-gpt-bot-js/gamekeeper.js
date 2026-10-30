@@ -88,7 +88,7 @@ async function flourish(openai, kind, { label, action, detail = "", woke = false
 }
 
 function parseRequest(content) {
-    const text = String(content || "").replace(/<@!?\d+>/g, " ").replace(/\bvesper\b[:,]?/gi, " ").trim();
+    const text = String(content || "").replace(/<@!?\d+>/g, " ").replace(/\bvesper\b[:,]?/gi, " ").replace(/\b(?:ask|tell|have)\s+sable\s+to\b/gi, " ").trim();
     const aliases = [
         ["core-keeper-2", /\bcore[ -]?keeper(?:[ -]?2)?\b/i],
         ["v-rising", /\bv[ -]?rising\b/i],
@@ -108,7 +108,8 @@ function parseRequest(content) {
         ["alwayson", /\b(always[ -]?on)\b/i],
         ["ondemand", /\b(on[ -]?demand)\b/i],
     ];
-    const action = actions.find(([, pattern]) => pattern.test(text))?.[0];
+    const modeAction = /\balways[ -]?on\b/i.test(text) ? "alwayson" : /\bon[ -]?demand\b/i.test(text) ? "ondemand" : null;
+    const action = modeAction || actions.find(([, pattern]) => pattern.test(text))?.[0];
     // Status words alone are conversational; only route them when the user
     // actually refers to a game or the game-server infrastructure.
     // e.g. "your new feature is online" must NOT trigger !games.
@@ -238,6 +239,28 @@ async function handle({ message, client, sableAvailability, openai }) {
                 detail: game ? "Someone requested one game; respond with a playful lazy refusal to do a single-game lookup, then provide the full inventory." : "Someone requested the full server inventory."
             });
             await reply(`${intro}\n\n🎮 **BlakLabz Game Server Inventory**\n${inventory}`);
+            return true;
+        }
+        // Privileged operations are delegated to Sable, not performed by Vesper.
+        // Forward a verifiable original-message reference; Sable must fetch the
+        // human message and independently check authorization before executing.
+        if (["restart", "kill", "alwayson", "ondemand"].includes(action)) {
+            if (!SABLE_USER_ID) throw new Error("Sable bot ID is not configured");
+            const reference = `https://discord.com/channels/${message.guild.id}/${message.channelId}/${message.id}`;
+            const handoff = `[GAMEKEEPER_HANDOFF_V1]\n` +
+                `requester_id=${message.author.id}\n` +
+                `request_message_id=${message.id}\n` +
+                `request_channel_id=${message.channelId}\n` +
+                `request_guild_id=${message.guild.id}\n` +
+                `action=${action}\n` +
+                `game=${game}\n` +
+                `original=${reference}\n` +
+                `[/GAMEKEEPER_HANDOFF_V1]`;
+            await reply({
+                content: `${await voice("handoff")}\n<@${SABLE_USER_ID}> ${handoff}`,
+                allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
+            });
+            console.log(`[gamekeeper] delegated action=${action} game=${game} requester=${message.author.id} original=${message.id}`);
             return true;
         }
         const sable = await sableAvailability(message.guild);
