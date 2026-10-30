@@ -13,6 +13,18 @@ const ADMIN_USER_ID = process.env.GAMEKEEPER_ADMIN_USER_ID ||
 const GAMES = ["core-keeper-2", "enshrouded", "shadowdark", "v-rising", "valheim", "windrose", "quake"];
 const LABELS = { "core-keeper-2": "Core Keeper 2", "v-rising": "V Rising", enshrouded: "Enshrouded", shadowdark: "Shadowdark", valheim: "Valheim", windrose: "Windrose", quake: "Quake" };
 const busy = new Set();
+// Keep operations in #blaklabz, not #charcoal-deli.
+const HANDOFF_TIMEOUT_MS = 105000;
+const STOP_TIMEOUT_MS = 105000;
+const STOP_ADMIN_ROLE_IDS = new Set((process.env.GAMEKEEPER_ADMIN_ROLE_IDS || "").split(",").map(x => x.trim()).filter(Boolean));
+function authorizedStop(message) {
+    return ADMIN_IDS.includes(message.author.id) ||
+        message.member?.roles?.cache?.some(role => STOP_ADMIN_ROLE_IDS.has(role.id)) === true;
+}
+function terminalFailure(body) {
+    return /⛔|❌|permission|denied|unauthori[sz]ed|failed|error|unknown|not found|controller error/i.test(body);
+}
+
 // Discord webhook ID (not the webhook display name or Gamekeeper bot user ID).
 // Set this explicitly to avoid trusting a spoofable display name.
 const GAMEKEEPER_WEBHOOK_ID = process.env.GAMEKEEPER_WEBHOOK_ID || "";
@@ -102,8 +114,9 @@ function parseRequest(content) {
     const commandLike = /\b(start|stop|restart|reboot|boot|launch|shutdown|shut|turn|power|wake|spin|fire|bring|kill|spank|kick|poke|nudge|status|running|online|offline|list|inventory|roster|show|check)\b/i.test(text);
     const actions = [
         ["start", /\b(start|boot|spin up|fire up|bring up|wake up|turn\s+(?:(?:it|that|the\s+server|[\w-]+)\s+)?on|power\s+(?:(?:it|that|[\w-]+)\s+)?up|launch)\b/i],
-        ["stop", /\b(stop|shut down|shutdown|turn\s+(?:(?:it|that|the\s+server|[\w-]+)\s+)?off|power off|kill)\b/i],
+        ["stop", /\b(stop|shut down|shutdown|turn\s+(?:(?:it|that|the\s+server|[\w-]+)\s+)?off|power off)\b/i],
         ["restart", /\b(restart|reboot)\b/i],
+        ["kill", /\b(kill|force[ -]?stop)\b/i],
         ["status", /\b(status|running|online|up|down)\b/i],
         ["alwayson", /\b(always[ -]?on)\b/i],
         ["ondemand", /\b(on[ -]?demand)\b/i],
@@ -124,7 +137,7 @@ function parseRequest(content) {
     return { action, game };
 }
 
-function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
+function waitForGamekeeper(client, channelId, game, timeoutMs = 25000, terminal = null) {
     let handler, timer;
     const promise = new Promise((resolve, reject) => {
         handler = msg => {
@@ -136,6 +149,7 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
                     if (!/controller error|⚠️|⛔/i.test(content)) return;
                 }
             } else if (!content.toLowerCase().includes(game.toLowerCase()) && !/controller error/i.test(content)) return;
+            if (terminal && !terminal(content)) return;
             cleanup();
             resolve(content);
         };
@@ -147,7 +161,11 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000) {
 }
 
 async function command(client, channel, action, game) {
-    const waiting = waitForGamekeeper(client, channel.id, action === "list" ? "__inventory__" : game);
+    const terminal = action === "stop"
+        ? body => terminalFailure(body) || /(?:✅|confirmed|already)\b.*\bstopped\b|\bstopped\b.*(?:✅|confirmed|already)/i.test(body)
+        : null;
+    const waiting = waitForGamekeeper(client, channel.id, action === "list" ? "__inventory__" : game,
+        action === "stop" ? STOP_TIMEOUT_MS : 25000, terminal);
     try {
         await channel.send({ content: action === "list" ? "!games" : `!game ${action} ${game}`, allowedMentions: { parse: [] } });
         return await waiting.promise;
@@ -186,6 +204,28 @@ async function notifyAdmin(client, detail) {
         console.warn("[gamekeeper] admin DM failed:", error.message);
         return false;
     }
+}
+
+// Observe the specific Sable confirmation in the operations channel. This is
+// reporting only: Sable and Gamekeeper remain responsible for authorization and execution.
+function waitForSableResult(client, channelId, action, game, afterId) {
+    let listener, timer;
+    const promise = new Promise((resolve, reject) => {
+        listener = msg => {
+            if (msg.author?.id !== SABLE_USER_ID || msg.channelId !== channelId) return;
+            if (BigInt(msg.id) <= BigInt(afterId)) return;
+            const body = String(msg.content || "");
+            if (!/Gamekeeper|handoff rejected|cannot verify|went quiet/i.test(body)) return;
+            if (!body.toLowerCase().includes(game.toLowerCase()) && !/handoff rejected/i.test(body)) return;
+            if (!body.toLowerCase().includes(action.toLowerCase()) && !/handoff rejected|went quiet/i.test(body)) return;
+            cleanup();
+            resolve(body);
+        };
+        timer = setTimeout(() => { cleanup(); reject(new Error("Sable did not confirm the handoff in time")); }, HANDOFF_TIMEOUT_MS);
+        client.on("messageCreate", listener);
+    });
+    function cleanup() { clearTimeout(timer); client.off("messageCreate", listener); }
+    return { promise, cancel: cleanup };
 }
 
 async function handle({ message, client, sableAvailability, openai }) {
@@ -241,11 +281,12 @@ async function handle({ message, client, sableAvailability, openai }) {
             await reply(`${intro}\n\n🎮 **BlakLabz Game Server Inventory**\n${inventory}`);
             return true;
         }
-        // Privileged operations are delegated to Sable, not performed by Vesper.
-        // Forward a verifiable original-message reference; Sable must fetch the
-        // human message and independently check authorization before executing.
+        // Delegate only restart, kill, and scheduling changes to Sable.
+        // The payload stays in #blaklabz; public chat gets prose and a result.
         if (["restart", "kill", "alwayson", "ondemand"].includes(action)) {
             if (!SABLE_USER_ID) throw new Error("Sable bot ID is not configured");
+            const channel = await client.channels.fetch(GAMEKEEPER_CHANNEL_ID);
+            if (!channel?.send) throw new Error("Gamekeeper operations channel unavailable");
             const reference = `https://discord.com/channels/${message.guild.id}/${message.channelId}/${message.id}`;
             const handoff = `[GAMEKEEPER_HANDOFF_V1]\n` +
                 `requester_id=${message.author.id}\n` +
@@ -256,29 +297,42 @@ async function handle({ message, client, sableAvailability, openai }) {
                 `game=${game}\n` +
                 `original=${reference}\n` +
                 `[/GAMEKEEPER_HANDOFF_V1]`;
-            await reply({
-                content: `${await voice("handoff")}\n<@${SABLE_USER_ID}> ${handoff}`,
-                allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
-            });
-            console.log(`[gamekeeper] delegated action=${action} game=${game} requester=${message.author.id} original=${message.id}`);
+            // Register before posting: Sable may respond faster than Vesper's typing delay.
+            const waiter = waitForSableResult(client, channel.id, action, game, message.id);
+            try {
+                const posted = await channel.send({
+                    content: `<@${SABLE_USER_ID}> ${handoff}`,
+                    allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
+                });
+                console.log(`[gamekeeper] delegated action=${action} game=${game} requester=${message.author.id} original=${message.id} ops=${posted.id}`);
+                await reply(`${await voice("handoff")} I've sent the request to the operations channel; waiting for Sable's confirmation.`);
+                const result = await waiter.promise;
+                if (terminalFailure(result) || /rejected|cannot verify|went quiet/i.test(result)) {
+                    await reply(`⚠️ Sable could not confirm ${action} for ${label}: ${result.slice(0, 600)}`);
+                } else {
+                    await reply(`📚 Sable reports: ${result.slice(0, 900)}`);
+                }
+            } catch (error) {
+                await reply(`⚠️ Sable hasn't confirmed ${action} for ${label}. Check #blaklabz before retrying; the operation may still have completed.`);
+                console.warn(`[gamekeeper] handoff result timeout action=${action} game=${game}: ${error.message}`);
+            } finally { waiter.cancel(); }
             return true;
         }
-        const sable = await sableAvailability(message.guild);
-        if (sable === "online") {
-            const line = await voice("handoff");
-            await reply({
-                content: `${line}\n<@${SABLE_USER_ID}>, please ${action} **${game}** through Gamekeeper and report the result.`,
-                allowedMentions: { users: SABLE_USER_ID ? [SABLE_USER_ID] : [], repliedUser: false },
-            });
+        // Stop is Vesper's responsibility, not an informal Sable handoff.
+        if (action === "stop") {
+            if (!authorizedStop(message)) {
+                await reply("⛔ Stopping game servers requires administrator permission.");
+                return true;
+            }
+            const channel = await client.channels.fetch(GAMEKEEPER_CHANNEL_ID);
+            if (!channel?.send) throw new Error("Gamekeeper command channel unavailable");
+            const result = await command(client, channel, "stop", game);
+            if (terminalFailure(result)) throw new Error(result);
+            if (!/(?:✅|confirmed|already)\b.*\bstopped\b|\bstopped\b.*(?:✅|confirmed|already)/i.test(result)) throw new Error(`Unconfirmed stop: ${result}`);
+            await reply(`💀 ${label} has been put to bed. Gamekeeper confirms the stop. ${result.slice(0, 500)}`);
             return true;
         }
-        if (action !== "start" && action !== "status") {
-            const notified = await notifyAdmin(client, `${message.author.username} requested ${action} ${game} while Sable was ${sable}. Channel: <#${message.channelId}>`);
-            const line = await voice("denied");
-            const admin = ADMIN_USER_ID && ADMIN_USER_ID !== client.user.id ? ` Ask <@${ADMIN_USER_ID}>.` : "";
-            await reply({ content: `${line} I can't ${action} ${label} while Sable is ${sable}.${admin}${notified ? " I sent an admin alert." : ""}`, allowedMentions: { users: ADMIN_USER_ID && ADMIN_USER_ID !== client.user.id ? [ADMIN_USER_ID] : [], repliedUser: false } });
-            return true;
-        }
+        // Start and status are handled directly by Vesper, regardless of Sable's presence.
         const channel = await client.channels.fetch(GAMEKEEPER_CHANNEL_ID);
         if (!channel?.send) throw new Error("Gamekeeper command channel unavailable");
         const status = await command(client, channel, "status", game);
