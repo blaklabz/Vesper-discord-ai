@@ -13,6 +13,12 @@ const ADMIN_USER_ID = process.env.GAMEKEEPER_ADMIN_USER_ID ||
 const GAMES = ["core-keeper-2", "enshrouded", "shadowdark", "v-rising", "valheim", "windrose", "quake"];
 const LABELS = { "core-keeper-2": "Core Keeper 2", "v-rising": "V Rising", enshrouded: "Enshrouded", shadowdark: "Shadowdark", valheim: "Valheim", windrose: "Windrose", quake: "Quake" };
 const busy = new Set();
+// Discord webhook ID (not the webhook display name or Gamekeeper bot user ID).
+// Set this explicitly to avoid trusting a spoofable display name.
+const GAMEKEEPER_WEBHOOK_ID = process.env.GAMEKEEPER_WEBHOOK_ID || "";
+const GAMEKEEPER_ANNOUNCE_CHANNEL_ID = process.env.GAMEKEEPER_ANNOUNCE_CHANNEL_ID || "516241218632548377";
+const announcedShutdowns = new Map();
+
 
 // Match Vesper's existing conversational wake timing in index.js.
 const { beginConversationalWake, wakeEngaged } = require("./vesper-presence");
@@ -54,6 +60,7 @@ const FALLBACK = {
     busy: ["One server ritual at a time, please.", "I'm already handling that one. Patience, mortal.", "Same game, same moment. I only have two metaphorical hands."],
     inventory: ["You wanted one server? Adorable. I fetched the entire crypt. Find it yourself.", "I refuse to be a personal server concierge. Here’s the whole collection.", "One status check? Please. I brought you the entire inventory. Use your eyeballs."],
     inventoryAll: ["The full roster, freshly dragged out of Gamekeeper:", "Here’s the state of the whole digital dungeon:", "I checked every server. Yes, all of them. Try to contain your awe."],
+    shutdownVerified: ["The machines have been tucked into their crypts. I'm going back to the couch.", "Four AM. The servers are asleep. Some of you should try it.", "Gamekeeper did the responsible thing. Disgusting. I approve."],
     handoff: ["Sable's awake, so I'm delegating this particular haunting.", "The librarian's on duty. She gets the server ritual.", "I'm passing this one to Sable before someone hands me more responsibility."],
     clarify: ["I caught the game name, but the rest of that spell was gibberish. Start it, or what?", "Darling, those words are doing parkour. Which server action did you actually want?", "That sounded almost like a command. Try telling me what to do with the server."],
 };
@@ -105,7 +112,8 @@ function parseRequest(content) {
     // Status words alone are conversational; only route them when the user
     // actually refers to a game or the game-server infrastructure.
     // e.g. "your new feature is online" must NOT trigger !games.
-    const inventoryContext = serverContext || /\b(?:game\s*servers?|games?|servers?|inventory|roster|gamekeeper)\b/i.test(text);
+    // A bare "game" (e.g. Wendy's RPG) or "what" is NOT an infra request.
+    const inventoryContext = serverContext || /\b(?:game\s*servers?|servers?|inventory|roster|gamekeeper)\b/i.test(text);
     if (inventoryContext && (action === "status" ||
         (!action && (inventoryQuestion || statusQuestion)))) {
         return { action: "inventory", game, specific: Boolean(game) };
@@ -275,4 +283,45 @@ async function handle({ message, client, sableAvailability, openai }) {
     } finally { busy.delete(key); }
 }
 
-module.exports = { handle, parseRequest };
+// Gamekeeper's 4 AM verified shutdown webhook, never the warning countdown.
+// Accept only a configured Discord webhook ID in the Gamekeeper channel.
+async function handleShutdownWebhook({ message, client, openai }) {
+    if (!GAMEKEEPER_WEBHOOK_ID || !message.guild ||
+        message.channelId !== GAMEKEEPER_CHANNEL_ID ||
+        message.webhookId !== GAMEKEEPER_WEBHOOK_ID) return false;
+    const body = String(message.content || "");
+    if (!/💀\s*4:00\s*AM\s*[—-]\s*Gamekeeper shutdown verified/i.test(body)) return false;
+    const confirmed = [...body.matchAll(/^CONFIRMED\s+([\w-]+)\s*\(VM\s+(\d+)\):\s*stopped\s*$/gim)];
+    if (!confirmed.length) return false;
+    const names = [...new Set(confirmed.map(m => m[1].toLowerCase()).filter(name => GAMES.includes(name)))];
+    if (!names.length) return false;
+
+    // Retain a short-lived signature to avoid repeated webhook deliveries.
+    const now = Date.now();
+    for (const [key, at] of announcedShutdowns) if (now - at > 6 * 3600000) announcedShutdowns.delete(key);
+    const key = `${new Date(message.createdTimestamp || now).toISOString().slice(0, 10)}:${names.slice().sort().join(",")}`;
+    if (announcedShutdowns.has(key)) return true;
+    announcedShutdowns.set(key, now);
+    try {
+        const channel = await client.channels.fetch(GAMEKEEPER_ANNOUNCE_CHANNEL_ID);
+        if (!channel?.send) throw new Error("Announcement channel unavailable");
+        const labels = names.map(name => LABELS[name]);
+        const fallback = `💀 Gamekeeper confirmed ${labels.join(", ")} ${names.length === 1 ? "is" : "are"} shut down. The server crypt is closed. Go to bed, goblins.`;
+        const quip = await flourish(openai, "shutdownVerified", {
+            label: labels.join(", "), action: "shutdown", detail: "Gamekeeper verified these servers stopped at the 4 AM Eastern hard shutdown. Make a brief snarky announcement; do not suggest any other servers stopped."
+        });
+        // The verified facts are deterministic; the optional quip is just flavor.
+        const flavor = quip || fallback;
+        await channel.send({
+            content: `💀 **Gamekeeper verified shutdown:** ${labels.join(", ")}\n${flavor}`,
+            allowedMentions: { parse: [] },
+        });
+        console.log(`[gamekeeper] shutdown announced: ${names.join(",")}`);
+    } catch (error) {
+        announcedShutdowns.delete(key); // Allow retry if webhook is resent.
+        console.error("[gamekeeper] shutdown announcement failed:", error);
+    }
+    return true;
+}
+
+module.exports = { handle, parseRequest, handleShutdownWebhook };

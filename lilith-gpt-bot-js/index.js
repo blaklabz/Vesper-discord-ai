@@ -1383,6 +1383,8 @@ client.once(
 client.on(
     Events.MessageCreate,
     async (message) => {
+        // Verified Gamekeeper webhook events must be processed before bot routing.
+        if (await gamekeeper.handleShutdownWebhook({ message, client, openai })) return;
 
         /*
          * ------------------------------------------------
