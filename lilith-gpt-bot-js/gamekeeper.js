@@ -162,7 +162,7 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000, terminal 
 
 async function command(client, channel, action, game) {
     const terminal = action === "start"
-        ? body => terminalFailure(body) || /(?:✅|confirmed|already).*(?:started|running)|(?:started|running).*(?:✅|confirmed|already)/i.test(body)
+        ? body => terminalFailure(body) || /(?:✅|confirmed|already).*\b(?:started|running)\b|\b(?:started|running)\b.*(?:✅|confirmed|already)/i.test(body)
         : action === "stop"
         ? body => terminalFailure(body) || /(?:✅|confirmed|already)\b.*\bstopped\b|\bstopped\b.*(?:✅|confirmed|already)/i.test(body)
         : null;
@@ -212,18 +212,20 @@ async function notifyAdmin(client, detail) {
 // reporting only: Sable and Gamekeeper remain responsible for authorization and execution.
 function waitForSableResult(client, channelId, action, game, afterId) {
     let listener, timer;
+    const normalize = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const gameNames = [game, LABELS[game]].map(normalize);
     const promise = new Promise((resolve, reject) => {
         listener = msg => {
             if (msg.author?.id !== SABLE_USER_ID || msg.channelId !== channelId) return;
             if (BigInt(msg.id) <= BigInt(afterId)) return;
             const body = String(msg.content || "");
-            if (!/Gamekeeper|handoff rejected|cannot verify|went quiet/i.test(body)) return;
-            if (!body.toLowerCase().includes(game.toLowerCase()) && !/handoff rejected/i.test(body)) return;
-            // Sable's final prose often omits the literal action (e.g. "The lights
-            // are out in Valheim. Gamekeeper verified the result."). Require the
-            // game and Gamekeeper, not an exact action word. The waiter is armed
-            // before the handoff is sent so fast replies cannot be missed.
-            if (!/Gamekeeper/i.test(body) && !/handoff rejected|cannot verify|went quiet/i.test(body)) return;
+            const normalized = normalize(body);
+            const matchesGame = gameNames.some(name => name && normalized.includes(name));
+            const failure = /handoff rejected|cannot verify|went quiet|⛔|❌|failed|denied|error/i.test(body);
+            // Sable may say "Core Keeper 2" for core-keeper-2 and may describe
+            // "kill" as "forcibly stopped". Do not require action keywords.
+            if (!matchesGame) return;
+            if (!/Gamekeeper/i.test(body) && !failure) return;
             cleanup();
             resolve(body);
         };
@@ -311,12 +313,13 @@ async function handle({ message, client, sableAvailability, openai }) {
                     allowedMentions: { users: [SABLE_USER_ID], repliedUser: false },
                 });
                 console.log(`[gamekeeper] delegated action=${action} game=${game} requester=${message.author.id} original=${message.id} ops=${posted.id}`);
-                await reply(`${await voice("handoff")} I've sent the request to the operations channel; waiting for Sable's confirmation.`);
+                // Await the result directly. A slow typing/LLM acknowledgment can
+                // arrive after Sable finishes and misleadingly say "waiting".
                 const result = await waiter.promise;
                 if (terminalFailure(result) || /rejected|cannot verify|went quiet/i.test(result)) {
                     await reply(`⚠️ Sable could not confirm ${action} for ${label}: ${result.slice(0, 600)}`);
                 } else {
-                    await reply(`📚 Sable reports: ${result.slice(0, 900)}`);
+                    await reply(`${await voice("handoff")} 📚 Sable reports: ${result.slice(0, 900)}`);
                 }
             } catch (error) {
                 await reply(`⚠️ Sable hasn't confirmed ${action} for ${label}. Check #blaklabz before retrying; the operation may still have completed.`);
