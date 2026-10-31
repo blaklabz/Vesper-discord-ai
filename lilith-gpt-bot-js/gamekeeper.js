@@ -84,6 +84,7 @@ const FALLBACK = {
     busy: ["One server ritual at a time, please.", "I'm already handling that one. Patience, mortal.", "Same game, same moment. I only have two metaphorical hands."],
     inventory: ["You wanted one server? Adorable. I fetched the entire crypt. Find it yourself.", "I refuse to be a personal server concierge. Here’s the whole collection.", "One status check? Please. I brought you the entire inventory. Use your eyeballs."],
     inventoryAll: ["The full roster, freshly dragged out of Gamekeeper:", "Here’s the state of the whole digital dungeon:", "I checked every server. Yes, all of them. Try to contain your awe."],
+    shutdownWarning: ["Thirty minutes until the server curfew. Save your progress, nocturnal gremlins.", "Half an hour until Gamekeeper pulls the plug. Save now, complain later."],
     shutdownVerified: ["The machines have been tucked into their crypts. I'm going back to the couch.", "Four AM. The servers are asleep. Some of you should try it.", "Gamekeeper did the responsible thing. Disgusting. I approve."],
     handoff: ["The librarian's on duty. She gets the server ritual."],
     startConfirmed: ["{game} is awake and officially running. I dragged it out of the crypt; Gamekeeper checked the pulse.", "{game} has risen. The machinery confirms it, so I can return to doing absolutely nothing.", "The {game} server is running. My summoning ritual was flawless, obviously."],
@@ -107,7 +108,7 @@ async function flourish(openai, kind, { label, action, detail = "", woke = false
         const result = await openai.chat.completions.create({
             model: "gpt-5.5", max_completion_tokens: 140,
             messages: [
-                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 260 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For startConfirmed, Gamekeeper verified the named game is running; for stopConfirmed, Gamekeeper verified it is stopped. For either, produce a fresh self-contained playful sentence about the confirmed state, never paste or quote raw Gamekeeper output. For handoffSuccess, the operation is confirmed: celebrate with one complete witty sentence, mentioning the game and what changed, without quoting Sable, adding report labels, or narrating a pending handoff. For handoffFailure, the operation is NOT confirmed: give one complete witty but accurate sentence, without implying success. For sableOffline or sableDisconnected, Sable is unavailable and NO privileged command was submitted; refuse with dry humor without implying any change. For handoffTimeout, the outcome is unknown and a request MAY have completed; tell the user to check #blaklabz before retrying. For denied, permissions blocked the request; for error, do not claim success. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (reminder ? "Casually weave in a brief, accurate reminder of your Gamekeeper abilities without sounding like a help menu: " + reminderText : "Do not list your abilities unless directly relevant.") + " " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
+                { role: "system", content: "You are Vesper, a mischievous, sarcastic goth gamer in Discord. Write ONE fresh, vivid, playful line (max 260 characters) reacting to the specific server event. Vary your metaphors and sentence structures. Do not use repetitive stock phrases. Never invent facts, claim a VM has booted when only a request was submitted, or claim an alert was delivered. For startConfirmed, Gamekeeper verified the named game is running; for stopConfirmed, Gamekeeper verified it is stopped. For either, produce a fresh self-contained playful sentence about the confirmed state, never paste or quote raw Gamekeeper output. For shutdownWarning, the servers are still running and will shut down in 30 minutes: tell players to save. For shutdownVerified, the named servers are confirmed stopped. For handoffSuccess, the operation is confirmed: celebrate with one complete witty sentence, mentioning the game and what changed, without quoting Sable, adding report labels, or narrating a pending handoff. For handoffFailure, the operation is NOT confirmed: give one complete witty but accurate sentence, without implying success. For sableOffline or sableDisconnected, Sable is unavailable and NO privileged command was submitted; refuse with dry humor without implying any change. For handoffTimeout, the outcome is unknown and a request MAY have completed; tell the user to check #blaklabz before retrying. For denied, permissions blocked the request; for error, do not claim success. For a clarify event, playfully roast the confusing original request and ask for clarification without guessing an action. For a submitted start request, make it clear in your own fresh words that you sent the request to start the server, but do not imply it has finished booting. Avoid formulaic confirmations and do not mention RAM, memory, VM IDs, or resource figures. Do not include mentions, quotes, markdown code, newlines, or technical status details. " + (reminder ? "Casually weave in a brief, accurate reminder of your Gamekeeper abilities without sounding like a help menu: " + reminderText : "Do not list your abilities unless directly relevant.") + " " + (woke ? "You have just been disturbed from a nap; optionally add a sleepy or irritated flavor, but do not mention timers or system mechanics." : "") },
                 { role: "user", content: `Event: ${kind}; game: ${label}; action: ${action}; verified detail: ${String(detail).slice(0, 350)}` },
             ],
         });
@@ -422,43 +423,54 @@ async function handle({ message, client, sableAvailability, openai }) {
     } finally { busy.delete(key); }
 }
 
-// Gamekeeper's 4 AM verified shutdown webhook, never the warning countdown.
-// Accept only a configured Discord webhook ID in the Gamekeeper channel.
+// Authenticated Gamekeeper webhook: 30-minute warning and verified 4 AM shutdown.
+// Trust the configured webhook ID, not its spoofable display name.
 async function handleShutdownWebhook({ message, client, openai }) {
+    // Only consume authenticated webhook events posted in #blaklabz.
+    // Vesper sends her commentary separately to #charcoal-deli.
     if (!GAMEKEEPER_WEBHOOK_ID || !message.guild ||
         message.channelId !== GAMEKEEPER_CHANNEL_ID ||
         message.webhookId !== GAMEKEEPER_WEBHOOK_ID) return false;
     const body = String(message.content || "");
-    if (!/💀\s*4:00\s*AM\s*[—-]\s*Gamekeeper shutdown verified/i.test(body)) return false;
-    const confirmed = [...body.matchAll(/^CONFIRMED\s+([\w-]+)\s*\(VM\s+(\d+)\):\s*stopped\s*$/gim)];
-    if (!confirmed.length) return false;
-    const names = [...new Set(confirmed.map(m => m[1].toLowerCase()).filter(name => GAMES.includes(name)))];
-    if (!names.length) return false;
+    const warning = /30 minutes until the 4:00 AM Eastern hard shutdown/i.test(body);
+    const verified = /4:00\s*AM\s*[—-]\s*Gamekeeper shutdown verified/i.test(body);
+    if (!warning && !verified) return false;
 
-    // Retain a short-lived signature to avoid repeated webhook deliveries.
+    let names;
+    if (warning) {
+        const match = body.match(/Servers:\s*([^\r\n]+)/i);
+        if (!match) return true;
+        names = match[1].split(/[,;]/).map(n => n.trim().toLowerCase()).filter(n => GAMES.includes(n));
+    } else {
+        const confirmed = [...body.matchAll(/^CONFIRMED\s+([\w-]+)\s*\(VM\s+\d+\):\s*stopped\s*$/gim)];
+        names = confirmed.map(m => m[1].toLowerCase()).filter(n => GAMES.includes(n));
+    }
+    names = [...new Set(names)];
+    if (!names.length) return true;
     const now = Date.now();
     for (const [key, at] of announcedShutdowns) if (now - at > 6 * 3600000) announcedShutdowns.delete(key);
-    const key = `${new Date(message.createdTimestamp || now).toISOString().slice(0, 10)}:${names.slice().sort().join(",")}`;
+    const eventType = warning ? "warning30" : "shutdownVerified";
+    const key = `${new Date(message.createdTimestamp || now).toISOString().slice(0, 10)}:${eventType}:${names.slice().sort().join(",")}`;
     if (announcedShutdowns.has(key)) return true;
     announcedShutdowns.set(key, now);
     try {
         const channel = await client.channels.fetch(GAMEKEEPER_ANNOUNCE_CHANNEL_ID);
         if (!channel?.send) throw new Error("Announcement channel unavailable");
         const labels = names.map(name => LABELS[name]);
-        const fallback = `💀 Gamekeeper confirmed ${labels.join(", ")} ${names.length === 1 ? "is" : "are"} shut down. The server crypt is closed. Go to bed, goblins.`;
-        const quip = await flourish(openai, "shutdownVerified", {
-            label: labels.join(", "), action: "shutdown", detail: "Gamekeeper verified these servers stopped at the 4 AM Eastern hard shutdown. Make a brief snarky announcement; do not suggest any other servers stopped."
+        const quip = await flourish(openai, warning ? "shutdownWarning" : "shutdownVerified", {
+            label: labels.join(", "), action: warning ? "warning" : "shutdown",
+            detail: warning
+                ? "Gamekeeper warns that these servers are scheduled for shutdown in 30 minutes at 4 AM Eastern. Remind players to save; do NOT claim they have stopped."
+                : "Gamekeeper verified these servers stopped at 4 AM Eastern. Mention no other servers."
         });
-        // The verified facts are deterministic; the optional quip is just flavor.
-        const flavor = quip || fallback;
-        await channel.send({
-            content: `💀 **Gamekeeper verified shutdown:** ${labels.join(", ")}\n${flavor}`,
-            allowedMentions: { parse: [] },
-        });
-        console.log(`[gamekeeper] shutdown announced: ${names.join(",")}`);
+        const prefix = warning
+            ? `⚠️ **30 minutes until shutdown:** ${labels.join(", ")}`
+            : `💀 **Gamekeeper verified shutdown:** ${labels.join(", ")}`;
+        await channel.send({ content: `${prefix}\n${quip}`, allowedMentions: { parse: [] } });
+        console.log(`[gamekeeper] ${eventType} announced: ${names.join(",")}`);
     } catch (error) {
-        announcedShutdowns.delete(key); // Allow retry if webhook is resent.
-        console.error("[gamekeeper] shutdown announcement failed:", error);
+        announcedShutdowns.delete(key);
+        console.error(`[gamekeeper] ${eventType} announcement failed:`, error);
     }
     return true;
 }
