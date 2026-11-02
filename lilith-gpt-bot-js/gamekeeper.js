@@ -10,8 +10,29 @@ const ADMIN_USER_ID = process.env.GAMEKEEPER_ADMIN_USER_ID ||
     ADMIN_IDS.find(id => id === "195895553911947264") ||
     ADMIN_IDS.find(id => id !== "1232035346531745956" && id !== GAMEKEEPER_BOT_ID && id !== SABLE_USER_ID) ||
     "195895553911947264";
-const GAMES = ["core-keeper-2", "enshrouded", "shadowdark", "v-rising", "valheim", "windrose", "quake"];
-const LABELS = { "core-keeper-2": "Core Keeper 2", "v-rising": "V Rising", enshrouded: "Enshrouded", shadowdark: "Shadowdark", valheim: "Valheim", windrose: "Windrose", quake: "Quake" };
+// Gamekeeper owns the roster. Never maintain a second game list here.
+const knownGames = new Map();
+const validGameName = name => /^[a-z0-9][a-z0-9_-]{0,63}$/.test(name);
+const gameLabel = name => name ? name.split(/[-_]/).map(part =>
+    part ? part[0].toUpperCase() + part.slice(1) : part).join(" ") : "the game servers";
+function gameAliases(name) {
+    const words = name.split(/[-_]/).filter(Boolean);
+    const variants = new Set([name, words.join(" "), words.join("-")]);
+    // Allow 'core keeper' for 'core-keeper-2', without maintaining a title list.
+    if (words.length > 1 && /^\d+$/.test(words[words.length - 1])) {
+        variants.add(words.slice(0, -1).join(" "));
+    }
+    return [...variants].sort((a, b) => b.length - a.length);
+}
+function findGame(text, names = knownGames.keys()) {
+    const normalized = String(text).toLowerCase();
+    const candidates = [...names].flatMap(name => gameAliases(name).map(alias => ({ name, alias })))
+        .sort((a, b) => b.alias.length - a.alias.length);
+    return candidates.find(({ alias }) => {
+        const escaped = alias.replace(/[ -]/g, "[ _-]");
+        return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(normalized);
+    })?.name || null;
+}
 const busy = new Set();
 // Optional, occasional capability hints; never more than once per cooldown.
 const reminderChanceRaw = Number(process.env.GAMEKEEPER_CAPABILITY_REMINDER_CHANCE ?? "0.12");
@@ -125,12 +146,7 @@ async function flourish(openai, kind, { label, action, detail = "", woke = false
 
 function parseRequest(content) {
     const text = String(content || "").replace(/<@!?\d+>/g, " ").replace(/\bvesper\b[:,]?/gi, " ").replace(/\b(?:ask|tell|have)\s+sable\s+to\b/gi, " ").trim();
-    const aliases = [
-        ["core-keeper-2", /\bcore[ -]?keeper(?:[ -]?2)?\b/i],
-        ["v-rising", /\bv[ -]?rising\b/i],
-        ...GAMES.filter(x => !["core-keeper-2", "v-rising"].includes(x)).map(x => [x, new RegExp(`\\b${x}\\b`, "i")]),
-    ];
-    const game = aliases.find(([, pattern]) => pattern.test(text))?.[0] || null;
+    const game = findGame(text);
     // Status/inventory questions always return the complete inventory.
     const inventoryQuestion = /\b(list|inventory|roster|catalog|catalogue|which|what|show|all|available|servers?|games?)\b/i.test(text);
     const statusQuestion = /\b(status|running|online|up|down|active|stopped|state)\b/i.test(text);
@@ -169,7 +185,7 @@ function waitForGamekeeper(client, channelId, game, timeoutMs = 25000, terminal 
             const content = String(msg.content || "");
             if (game === "__inventory__") {
                 if (!/\b(running|stopped|always-on|on-demand)\b/i.test(content) ||
-                    !GAMES.some(name => content.toLowerCase().includes(name))) {
+                    !/^\s*[a-z0-9][a-z0-9_-]*\s+(?:running|stopped)\s+(?:always-on|on-demand)\s*$/im.test(content)) {
                     if (!/controller error|⚠️|⛔/i.test(content)) return;
                 }
             } else if (!content.toLowerCase().includes(game.toLowerCase()) && !/controller error/i.test(content)) return;
@@ -201,23 +217,34 @@ async function command(client, channel, action, game) {
     }
 }
 
-function formatInventory(raw) {
+function parseInventory(raw) {
     const rows = new Map();
     for (const line of String(raw || "").split(/\r?\n/)) {
-        // Gamekeeper's !games output is whitespace-separated, not colon-separated.
-        // Example: "core-keeper-2  stopped  on-demand"
-        const match = line.trim().match(/^(core-keeper-2|enshrouded|shadowdark|v-rising|valheim|windrose|quake)\s+(running|stopped)\s+(always-on|on-demand)\s*$/i);
+        const match = line.trim().match(/^([a-z0-9][a-z0-9_-]{0,63})\s+(running|stopped)\s+(always-on|on-demand)\s*$/i);
         if (!match) continue;
-        const [, name, stateRaw, modeRaw] = match;
-        const game = name.toLowerCase();
-        const state = stateRaw.toLowerCase();
-        const mode = modeRaw.toLowerCase() === "always-on" ? "Always-on" : "On-demand";
-        rows.set(game, `${state === "running" ? "🟢" : "⚫"} **${LABELS[game]}** — ${state === "running" ? "Running" : "Stopped"} | ${mode}`);
+        const [, rawName, rawState, rawMode] = match;
+        const name = rawName.toLowerCase();
+        if (!validGameName(name) || rows.has(name)) throw new Error(`Invalid or duplicate Gamekeeper game: ${name}`);
+        rows.set(name, { name, state: rawState.toLowerCase(), mode: rawMode.toLowerCase() });
     }
-    if (rows.size !== GAMES.length) {
-        throw new Error(`Incomplete Gamekeeper inventory (${rows.size}/${GAMES.length}); refusing to invent missing statuses`);
-    }
-    return GAMES.map(game => rows.get(game)).join("\n");
+    if (!rows.size) throw new Error("Gamekeeper returned no parseable inventory; refusing to assume an empty roster");
+    return rows;
+}
+function formatInventory(raw) {
+    const rows = parseInventory(raw);
+    knownGames.clear();
+    for (const [name, row] of rows) knownGames.set(name, row);
+    return [...rows.values()].map(({ name, state, mode }) =>
+        `${state === "running" ? "🟢" : "⚫"} **${gameLabel(name)}** — ${state === "running" ? "Running" : "Stopped"} | ${mode === "always-on" ? "Always-on" : "On-demand"}`
+    ).join("\n");
+}
+async function refreshGames(client) {
+    const channel = await client.channels.fetch(GAMEKEEPER_CHANNEL_ID);
+    if (!channel?.send) throw new Error("Gamekeeper command channel unavailable");
+    const raw = await command(client, channel, "list");
+    if (/⚠️|⛔|controller error/i.test(raw)) throw new Error(raw);
+    formatInventory(raw);
+    return knownGames;
 }
 
 async function notifyAdmin(client, detail) {
@@ -237,7 +264,7 @@ async function notifyAdmin(client, detail) {
 function waitForSableResult(client, channelId, action, game, afterId) {
     let listener, timer;
     const normalize = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const gameNames = [game, LABELS[game]].map(normalize);
+    const gameNames = [game, gameLabel(game)].map(normalize);
     const promise = new Promise((resolve, reject) => {
         listener = msg => {
             if (msg.author?.id !== SABLE_USER_ID || msg.channelId !== channelId) return;
@@ -264,10 +291,23 @@ async function handle({ message, client, sableAvailability, openai }) {
     if (message.author.bot || !message.guild) return false;
     const addressed = message.mentions.users.has(client.user.id) || /\bvesper\b/i.test(message.content);
     if (!addressed) return false;
-    const request = parseRequest(message.content);
+    let request = parseRequest(message.content);
+    // A newly added game may not be in our last roster. Discover it from
+    // Gamekeeper before deciding whether an addressed operation is actionable.
+    if (!request || (request.action === "clarify" && !request.game)) {
+        if (/\b(start|stop|restart|reboot|boot|launch|kill|status|turn|power|wake|always[ -]?on|on[ -]?demand)\b/i.test(message.content)) {
+            try {
+                await refreshGames(client);
+                request = parseRequest(message.content);
+            } catch (error) {
+                console.warn("[gamekeeper] game discovery failed:", error.message);
+                // Do not guess a server name if discovery is unavailable.
+            }
+        }
+    }
     if (!request) return false;
     const { action, game } = request;
-    const label = game ? LABELS[game] : "the game servers";
+    const label = gameLabel(game);
     const key = `${message.channelId}:${action === "inventory" ? "inventory" : game}`;
 
     // This route runs BEFORE index.js's normal conversational wake handler.
@@ -310,7 +350,7 @@ async function handle({ message, client, sableAvailability, openai }) {
             if (/⚠️|⛔|controller error/i.test(raw)) throw new Error(raw);
             const inventory = formatInventory(raw);
             const intro = await flourish(openai, game ? "inventory" : "inventoryAll", {
-                label: game ? LABELS[game] : "all game servers", action: "inventory", woke,
+                label: game ? gameLabel(game) : "all game servers", action: "inventory", woke,
                 detail: game ? "Someone requested one game; respond with a playful lazy refusal to do a single-game lookup, then provide the full inventory." : "Someone requested the full server inventory."
             });
             await reply(`${intro}\n\n🎮 **BlakLabz Game Server Inventory**\n${inventory}`);
@@ -440,10 +480,10 @@ async function handleShutdownWebhook({ message, client, openai }) {
     if (warning) {
         const match = body.match(/Servers:\s*([^\r\n]+)/i);
         if (!match) return true;
-        names = match[1].split(/[,;]/).map(n => n.trim().toLowerCase()).filter(n => GAMES.includes(n));
+        names = match[1].split(/[,;]/).map(n => n.trim().toLowerCase()).filter(validGameName);
     } else {
         const confirmed = [...body.matchAll(/^CONFIRMED\s+([\w-]+)\s*\(VM\s+\d+\):\s*stopped\s*$/gim)];
-        names = confirmed.map(m => m[1].toLowerCase()).filter(n => GAMES.includes(n));
+        names = confirmed.map(m => m[1].toLowerCase()).filter(validGameName);
     }
     names = [...new Set(names)];
     if (!names.length) return true;
@@ -456,7 +496,7 @@ async function handleShutdownWebhook({ message, client, openai }) {
     try {
         const channel = await client.channels.fetch(GAMEKEEPER_ANNOUNCE_CHANNEL_ID);
         if (!channel?.send) throw new Error("Announcement channel unavailable");
-        const labels = names.map(name => LABELS[name]);
+        const labels = names.map(gameLabel);
         const quip = await flourish(openai, warning ? "shutdownWarning" : "shutdownVerified", {
             label: labels.join(", "), action: warning ? "warning" : "shutdown",
             detail: warning
