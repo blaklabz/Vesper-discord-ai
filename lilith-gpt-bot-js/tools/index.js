@@ -1,3 +1,5 @@
+const { definition: webLookupDefinition, webLookup } = require("./webLookup");
+
 const {
     getDatetime,
 } = require("./datetime");
@@ -14,6 +16,7 @@ const {
 } = require("./gameHistory");
 
 const tools = {
+    web_lookup: { definition: webLookupDefinition, execute: webLookup },
     get_datetime: {
         definition: {
             type: "function",
