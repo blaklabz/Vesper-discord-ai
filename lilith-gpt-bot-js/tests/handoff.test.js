@@ -5,6 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const { requestsSableHandoff } = require('../handoff-routing');
+const { isCodingRequest, codingRefusal } = require('../coding-boundary');
 const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 const start = source.indexOf('const eligibleForHelp =');
 const end = source.indexOf('/*', source.indexOf('handoff=false api-call=false', start));
@@ -14,7 +15,7 @@ const routing = source.slice(start, end);
 async function runRoute({ dm = false, status = 'online', question = 'ask Sable to explain this' } = {}) {
     const calls = { classify: 0, presence: 0, replies: [] };
     const context = {
-        requestsSableHandoff, isDirectMessage: dm, explicitBothRequest: false, messageIsMedia: false, postedUrl: null,
+        isCodingRequest, codingRefusal, requestsSableHandoff, isDirectMessage: dm, explicitBothRequest: false, messageIsMedia: false, postedUrl: null,
         cleanedContent: question, SABLE_USER_ID: 'sable-id',
         message: { author: { bot: false, username: 'Toby' }, guild: dm ? null : {},
             channel: { sendTyping: async () => {} }, reply: async value => calls.replies.push(value) },

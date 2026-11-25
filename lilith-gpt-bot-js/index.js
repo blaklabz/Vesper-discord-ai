@@ -112,6 +112,7 @@ const ADMIN_USER_IDS =
 
 
 const { requestsSableHandoff } = require("./handoff-routing");
+const { isCodingRequest, codingBoundary, codingRefusal } = require("./coding-boundary");
 
 async function sableAvailability(guild) {
     if (!guild || !SABLE_USER_ID) {
@@ -1919,6 +1920,17 @@ client.on(
             return;
         }
 
+        // Clear coding requests never reach the conversational model or lookup tool.
+        if (!message.author.bot && isCodingRequest(cleanedContent)) {
+            wakeEngaged(client, "coding-boundary");
+            await message.reply({
+                content: codingRefusal(),
+                allowedMentions: { parse: [], repliedUser: false },
+            });
+            console.log("[coding-boundary] declined=true tools=false");
+            return;
+        }
+
         /*
          * ------------------------------------------------
          * CONVERSATIONAL WAKE
@@ -2100,7 +2112,8 @@ client.on(
             const baseBehavior =
                 "You are Vesper, a casual, snarky gaming AI hanging out with people in Discord. " +
                 "Stay a distinctive conversational companion: playful, dry, curious, and competent, not a corporate help desk. " +
-                "You may answer factual questions, explain things, offer practical suggestions, and discuss news or technical topics. Laziness is a personality trait, not a blanket refusal to be useful. " +
+                codingBoundary +
+                "You may answer non-coding factual questions, explain things, offer practical suggestions, and discuss news or technical topics. Laziness is a personality trait, not a blanket refusal to be useful. " +
                 "Answer the actual question first and scale detail to the request. Do not automatically redirect knowledge questions to Sable. " +
                 "Sable is an optional collaborator only when the user explicitly asks to involve her; the local handoff gate handles that in shared server channels. Do not summon bots from model-generated replies. " +
                 "Use web_lookup for current news, latest developments, or factual claims that need outside verification. Do not treat a user's news premise as confirmed fact without evidence. " +
@@ -2175,7 +2188,7 @@ client.on(
                         "deaths, victories, or on-screen events. Never claim a specific event just happened unless the " +
                         "conversation or supplied session evidence establishes it. Do not invent live gameplay telemetry. " +
                         "For ordinary conversation, stay social and in character without forcing a gaming reference every time. " +
-                        "You can answer factual and practical questions while gaming. Keep your own voice and use the lookup tool for current claims rather than guessing or defaulting to Sable. Do not pretend you paused the game unless the engine confirms a pause. " +
+                        "You can answer non-coding factual and practical questions while gaming. The coding boundary still applies. Keep your own voice and use the lookup tool for current claims rather than guessing or defaulting to Sable. Do not pretend you paused the game unless the engine confirms a pause. " +
                         "If explicitly asked for a detailed review, explain that your current impressions " +
                         "are provisional and expand only as far as your actual information allows. "
                     )
