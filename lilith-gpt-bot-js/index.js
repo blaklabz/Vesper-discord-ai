@@ -94,6 +94,8 @@ const GENERAL_CHANNEL_ID =
 
 // One pending unsolicited media reaction per channel.
 const pendingMediaReactions = new Map();
+const { createMediaPolicy, unsolicitedMediaContext, skipMediaReply } = require("./media-policy");
+const mediaPolicy = createMediaPolicy();
 
 
 const ADMIN_USER_IDS =
@@ -2050,14 +2052,25 @@ client.on(
         let mediaReaction = null;
         if (unsolicitedMedia) {
             const prior = pendingMediaReactions.get(message.channelId);
-            if (prior) prior.cancelled = true;
+            if (prior) {
+                prior.cancelled = true;
+                pendingMediaReactions.delete(message.channelId);
+            }
+            if (!mediaPolicy.canReact(message.channelId)) {
+                console.log(`[vision] Skipped unsolicited media: channel cooldown message=${message.id}`);
+                return;
+            }
             mediaReaction = { messageId: message.id, cancelled: false };
             pendingMediaReactions.set(message.channelId, mediaReaction);
             const delay = randomBetween(0, 30000);
             console.log(`[vision] Media reaction queued; delay=${delay}ms message=${message.id}`);
             await sleep(delay);
             if (mediaReaction.cancelled ||
-                pendingMediaReactions.get(message.channelId) !== mediaReaction) {
+                pendingMediaReactions.get(message.channelId) !== mediaReaction ||
+                !mediaPolicy.canReact(message.channelId)) {
+                if (pendingMediaReactions.get(message.channelId) === mediaReaction) {
+                    pendingMediaReactions.delete(message.channelId);
+                }
                 console.log(`[vision] Superseded media reaction ${message.id}`);
                 return;
             }
@@ -2228,6 +2241,7 @@ client.on(
                             gamingEmoji +
                             schedulingBehavior +
                             wakeContext +
+                            (unsolicitedMedia ? unsolicitedMediaContext : "DIRECT IMAGE: The user addressed you or sent this privately. Answer their actual question naturally; do not use the unsolicited silence marker. ") +
                             "Someone has posted an image or GIF. " +
                             "React naturally to what is visually present. " +
                             "Respond like another person hanging out in the channel, not like an image-analysis service. " +
@@ -2599,6 +2613,12 @@ client.on(
                 return;
             }
 
+            if (unsolicitedMedia && (skipMediaReply(responseMessage) ||
+                !mediaPolicy.canReact(message.channelId))) {
+                console.log(`[vision] Chose silence for unsolicited media message=${message.id}`);
+                return;
+            }
+
             /*
              * ------------------------------------------------
              * FINAL RESPONSE CHECK
@@ -2665,6 +2685,7 @@ client.on(
                         ? { content: chunk, allowedMentions: { parse: [], repliedUser: false } }
                         : chunk
                     );
+                    if (unsolicitedMedia) mediaPolicy.recordReply(message.channelId);
 
                 } else {
                     await message
@@ -2683,6 +2704,7 @@ client.on(
             );
 
 
+            if (unsolicitedMedia) return; // Failed ambient reactions should stay silent too.
             try {
                 await message.reply(
                     "hmm... let me check to see if toby paid the bill.. try again in a sec.."
