@@ -217,3 +217,53 @@ test('watch join is admin-only and stop also disconnects voice',async()=>{
     await c.handle(message('!watch stop',replies));assert.equal(leaves,1);
     assert.match(replies.at(-1).content,/disconnected/);
 });
+
+test('an explicitly addressed natural watch question uses fresh visual frames',async()=>{
+    let calls=0;const replies=[];
+    const c=createWatchController({token,adminIds:new Set(['admin']),now:()=>1000000,
+        isAddressed:()=>true,openai:{chat:{completions:{create:async payload=>{
+            calls++;assert.ok(payload.messages[1].content.some(part=>part.type==='image_url'));
+            return {choices:[{message:{content:'A snowy game scene.'}}]};
+        }}}}});
+    await c.handle(message('!watch start',replies));c.store.accept(frame());
+    assert.equal(await c.handle(message('Vesper are you aware of what you are watching right now?',replies)),true);
+    assert.equal(calls,1);assert.equal(replies.at(-1).content,'A snowy game scene.');
+});
+test('regular chat gets truthful watch metadata but no fabricated pixels',async()=>{
+    const c=createWatchController({token,adminIds:new Set(['admin']),now:()=>1000000,openai:{}});
+    assert.equal(c.contextFor('channel'),'');
+    c.store.start('channel','admin');
+    assert.match(c.contextFor('channel'),/no usable fresh frames/);
+    c.store.accept(frame());
+    assert.match(c.contextFor('channel'),/"fresh_frames":1/);
+    assert.match(c.contextFor('channel'),/No frame pixels are attached/);
+    assert.equal(c.contextFor('another-channel'),'');
+    assert.match(c.contextFor('dm',{allowCrossChannel:true}),/working visual bridge/);
+});
+test('non-addressed or non-admin visual questions do not bypass normal chat routing',async()=>{
+    const replies=[];let calls=0;
+    const c=createWatchController({token,adminIds:new Set(['admin']),now:()=>1000000,isAddressed:()=>false,
+        openai:{chat:{completions:{create:async()=>{calls++;}}}}});
+    await c.handle(message('!watch start',replies));c.store.accept(frame());
+    assert.equal(await c.handle(message('What are you watching?',replies)),false);
+    assert.equal(await c.handle(message('Vesper what are you watching?',replies,'stranger')),false);
+    assert.equal(calls,0);
+});
+test('natural visual question reports missing frames instead of inventing an observation',async()=>{
+    const replies=[];let calls=0;
+    const c=createWatchController({token,adminIds:new Set(['admin']),now:()=>1000000,isAddressed:()=>true,
+        openai:{chat:{completions:{create:async()=>{calls++;}}}}});
+    await c.handle(message('!watch start',replies));
+    await c.handle(message('Vesper what are you watching?',replies));
+    assert.equal(calls,0);assert.match(replies.at(-1).content,/No fresh stream frames/);
+});
+test('admin DM can ask about an active general watch without moving the session',async()=>{
+    const replies=[];
+    const c=createWatchController({token,adminIds:new Set(['admin']),now:()=>1000000,
+        openai:{chat:{completions:{create:async()=>({choices:[{message:{content:'The game stream.'}}]})}}}});
+    c.store.start('general','admin');c.store.accept(frame());
+    const dm=message('What are you watching right now?',replies);dm.channelId='dm';
+    await c.handle(dm);
+    assert.equal(replies.at(-1).content,'The game stream.');
+    assert.equal(c.store.status().channel_id,'general');
+});

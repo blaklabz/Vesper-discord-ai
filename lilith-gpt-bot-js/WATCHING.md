@@ -57,3 +57,16 @@ The voice dependency is pinned to a release compatible with Vesper's Node 22 run
 voice-encryption dependencies must resolve for the LXC platform during `npm ci`; no Opus player or FFmpeg
 pipeline is required for self-muted/self-deafened presence. Live voice joining and actual automatic posts
 still need testing after deployment. Unit tests use fake Discord/model/voice clients and do not join a server.
+
+## Normal conversation awareness
+
+Ordinary chat receives live watch metadata in the active watch channel: enabled state, number of fresh
+samples, latest capture timestamp, capture error, and automatic-comment mode. It does not receive image
+pixels merely because someone chats. Metadata must not be used to invent a visual observation.
+
+An explicitly addressed admin question such as "Vesper, are you aware of what you are watching right now?"
+or "Vesper, what do you see on screen?" uses the same fresh-image path as `!watch look`. An authorized
+admin can also ask in a DM about the current watch without moving the session out of general.
+Other server channels do not gain access to that watch context. Missing, expired, or stale frames produce
+an availability response. Bot messages and unaddressed conversation do not trigger this natural-question path.
+Voice presence remains self-muted/self-deafened and does not supply audio or stream video.

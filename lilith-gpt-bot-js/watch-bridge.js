@@ -132,9 +132,14 @@ function watchMessages(frames, question, codingBoundary = '') {
     ];
 }
 
+function naturalWatchQuestion(text) {
+    return /\bwhat (?:are you|you are|you're) (?:currently |actually |still )?watching\b|\bwhat(?:'s| is)(?: happening)? on (?:the |your )?(?:screen|stream)\b|\bwhat do you see\b|\b(?:can|do) you see\b.{0,35}\b(?:screen|stream|now)\b|\bare you (?:actually |still )?watching (?:this|the stream)\b/i.test(text);
+}
+
 function createWatchController({ token, adminIds, openai, codingBoundary = '', isCodingRequest = () => false,
     codingRefusal = () => 'I do not handle coding requests.', now = Date.now,
-    model = process.env.GHOSTFRAME_MODEL || 'gpt-5.5', generalChannelId, getChannel = async () => null, voicePresence = null }) {
+    model = process.env.GHOSTFRAME_MODEL || 'gpt-5.5', generalChannelId, getChannel = async () => null, voicePresence = null,
+    isAddressed = message => !message.guild || /\bvesper\b/i.test(message.content) }) {
     const store = createStore({ now });
     let server;
     let auto = null;
@@ -194,6 +199,21 @@ function createWatchController({ token, adminIds, openai, codingBoundary = '', i
     return {
         store,
         tick: tickAuto,
+        contextFor(channelId, { allowCrossChannel = false } = {}) {
+            const state = store.status();
+            if (!state.active || (state.channel_id !== channelId && !allowCrossChannel)) return '';
+            const frames = store.frames(state.channel_id);
+            return 'GHOSTFRAME WATCH CONTEXT (live application state, not a claim of continuous video): ' +
+                JSON.stringify({ active: true, fresh_frames: frames.length,
+                    latest_capture: frames.at(-1)?.captured_at || null,
+                    automatic_comments: Boolean(auto), capture_error: state.error }) + '. ' +
+                'You have a working visual bridge to a selected Mac window. Distinguish watching that stream from playing a game yourself. ' +
+                (frames.length ? 'Fresh sampled frames are available; do not claim you have no stream/image access. ' :
+                    'The session is enabled but there are no usable fresh frames right now; explain that limitation honestly. ') +
+                'No frame pixels are attached to this ordinary chat turn. Do not invent current visual details from metadata. ' +
+                'Explicitly addressed questions about what you are watching use the watch image path; !watch look also requests a fresh visual answer. ' +
+                'There is no audio or continuous video. Voice presence does not grant audio/video access. ';
+        },
         startServer({ host = '127.0.0.1', port = 8766 } = {}) {
             if (!enabled) return null;
             if (server) return server;
@@ -207,9 +227,16 @@ function createWatchController({ token, adminIds, openai, codingBoundary = '', i
         },
         async handle(message) {
             if (message.author.bot) return false;
-            const match = /^!watch\s+(start|stop|status|look|auto|join|leave)(?:\s+([\s\S]*))?\s*$/i.exec(message.content.trim());
-            if (auto && message.channelId === generalChannelId) auto.lastHuman = now();
-            store.interrupt(message.channelId);  // A human takes the floor; discard older in-flight watch replies.
+            let match = /^!watch\s+(start|stop|status|look|auto|join|leave)(?:\s+([\s\S]*))?\s*$/i.exec(message.content.trim());
+            const state = store.status();
+            const natural = !match && state.active && (state.channel_id === message.channelId || !message.guild) &&
+                adminIds.has(message.author.id) && isAddressed(message) && naturalWatchQuestion(message.content);
+            const watchChannelId = natural ? state.channel_id : message.channelId;
+            if (natural) {
+                match = [message.content, 'look', message.content];
+            }
+            if (auto && watchChannelId === generalChannelId) auto.lastHuman = now();
+            store.interrupt(watchChannelId);  // A human takes the floor; discard older in-flight watch replies.
             if (!match) return false;
             if (!adminIds.has(message.author.id)) { await reply(message, 'Watch controls are restricted to configured admins.'); return true; }
             if (!enabled) { await reply(message, 'Ghostframe receiver is not configured yet.'); return true; }
@@ -261,12 +288,12 @@ function createWatchController({ token, adminIds, openai, codingBoundary = '', i
                     'Checks roughly every three minutes; comments at least five minutes apart, with silence when nothing stands out. ' +
                     'Keep Lookout, the tunnel, and the sender running. !watch auto off pauses comments; !watch stop ends the session.');
             } else {
-                if (!active.active || active.channel_id !== message.channelId) {
+                if (!active.active || active.channel_id !== watchChannelId) {
                     await reply(message, 'Start a watch session in this channel first with !watch start.'); return true;
                 }
                 const question = (match[2] || '').slice(0, 1500);
                 if (isCodingRequest(question)) { await reply(message, codingRefusal()); return true; }
-                const frames = store.frames(message.channelId);
+                const frames = store.frames(watchChannelId);
                 if (!frames.length) { await reply(message, 'No fresh stream frames are available. Check the Mac bridge and Lookout preview.'); return true; }
                 const version = store.version();
                 await message.channel.sendTyping().catch(() => {});
@@ -274,7 +301,7 @@ function createWatchController({ token, adminIds, openai, codingBoundary = '', i
                 try {
                     const response = await openai.chat.completions.create({ model,
                         messages: watchMessages(frames, question, codingBoundary), max_completion_tokens: 500 });
-                    if (store.version() !== version || !store.frames(message.channelId).length ||
+                    if (store.version() !== version || !store.frames(watchChannelId).length ||
                         frames.some(frame => now() - Date.parse(frame.captured_at) > MAX_AGE)) return true;
                     const content = response.choices?.[0]?.message?.content?.trim();
                     await reply(message, content ? content.slice(0, 1800) : 'I did not get a clear response from those frames.');
@@ -288,4 +315,4 @@ function createWatchController({ token, adminIds, openai, codingBoundary = '', i
     };
 }
 
-module.exports = { createStore, createServer, authorized, watchMessages, createWatchController, MAX_IMAGE, MAX_BODY };
+module.exports = { createStore, createServer, authorized, watchMessages, createWatchController, naturalWatchQuestion, MAX_IMAGE, MAX_BODY };

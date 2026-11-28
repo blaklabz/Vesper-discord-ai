@@ -226,6 +226,13 @@ const watchBridge = createWatchController({
     generalChannelId: GENERAL_CHANNEL_ID,
     getChannel: channelId => client.channels.fetch(channelId),
     voicePresence,
+    isAddressed: message => {
+        if (!message.guild) return true;
+        const first = [...message.content.matchAll(/<@!?(\d+)>|\b(vesper|sable)\b/gi)]
+            .map(match => match[1] ? (match[1] === client.user?.id ? "vesper" :
+                match[1] === SABLE_USER_ID ? "sable" : null) : match[2].toLowerCase()).find(Boolean);
+        return first === "vesper";
+    },
 });
 
 
@@ -2302,7 +2309,7 @@ client.on(
                         "system",
 
                     content:
-                        systemPrompt,
+                        systemPrompt + watchBridge.contextFor(message.channelId, { allowCrossChannel: isDirectMessage && ADMIN_USER_IDS.has(message.author.id) }),
                 },
             ];
 
