@@ -70,3 +70,48 @@ admin can also ask in a DM about the current watch without moving the session ou
 Other server channels do not gain access to that watch context. Missing, expired, or stale frames produce
 an availability response. Bot messages and unaddressed conversation do not trigger this natural-question path.
 Voice presence remains self-muted/self-deafened and does not supply audio or stream video.
+
+## Optional spoken commentary
+
+Default output remains text. After joining your ordinary Discord voice channel:
+
+```
+!watch join 120
+!watch output voice
+!watch voice-test
+!watch auto 120
+```
+
+`!watch output both` sends automatic comments to general and voice; `!watch output text`
+returns to text and self-mutes. Manual `!watch look` and natural visual questions still
+answer in text. Controls remain admin-only. Enabling voice posts an AI-voice disclosure
+in general. Vesper needs View Channel, Connect, and Speak permissions.
+
+`!watch stop` cancels speech, clears frames, disconnects, and resets output to text.
+`!watch leave` cancels speech and disconnects; voice-only commentary pauses until you
+join again. Expiry/disconnection also prevents playback. Human text activity interrupts
+speech; Vesper stays self-deafened and does not listen, record, or detect when people
+are speaking. She can therefore speak over someone; use text mode if that is disruptive.
+
+The existing LXC `OPENAI_KEY` funds speech requests. Optional LXC environment settings:
+
+```
+GHOSTFRAME_SPEECH_MODEL=gpt-realtime-2.1-mini
+GHOSTFRAME_SPEECH_VOICE=marin
+GHOSTFRAME_SPEECH_STYLE="NYC cabbie delivery: a feminine voice with a New York City accent, brisk conversational pacing, streetwise confidence, dry wit, and a little friendly impatience. Keep it natural and intelligible, without shouting. Read the supplied words exactly; do not add catchphrases or extra dialogue."
+```
+
+Restart Vesper after changing environment settings. Voice is provisional: audition with
+`!watch voice-test`. Stock Realtime voices include marin, cedar, coral, sage, shimmer,
+alloy, ash, ballad, echo, and verse. Delivery instructions influence rather than guarantee
+an accent or timbre. No Mac bridge change is needed.
+
+Speech uses a separate text-only Realtime request per comment, with no microphone
+input or conversation history. It buffers at most 20 seconds of 24 kHz PCM in memory,
+checks the returned transcript against the comment, resamples to Discord's 48 kHz
+stereo, and uses opusscript for encoding without FFmpeg. One job at a time, no queue;
+stop, new human text, or stale frames discard obsolete output. Comments are limited
+to 400 characters for speech. Synthesis has a 25-second deadline. Reworded transcripts
+(including some number pronunciations) are rejected rather than speaking extra words.
+Voice-only errors do not fall back to general; inspect `!watch status` and service logs.
+Speech adds OpenAI API usage. This feature does not enable voice conversation.

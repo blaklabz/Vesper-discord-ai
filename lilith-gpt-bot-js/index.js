@@ -216,6 +216,11 @@ const openai =
 const { createWatchController } = require("./watch-bridge");
 const { createVoicePresence } = require("./voice-presence");
 const voicePresence = createVoicePresence();
+const { createSynthesizer, createSpeechOutput } = require("./watch-speech");
+const speechOutput = createSpeechOutput({ voicePresence,
+    configured: Boolean(process.env.OPENAI_KEY),
+    synthesize: createSynthesizer({ apiKey: process.env.OPENAI_KEY }),
+});
 const watchBridge = createWatchController({
     token: process.env.GHOSTFRAME_BRIDGE_TOKEN,
     adminIds: ADMIN_USER_IDS,
@@ -225,7 +230,7 @@ const watchBridge = createWatchController({
     codingRefusal,
     generalChannelId: GENERAL_CHANNEL_ID,
     getChannel: channelId => client.channels.fetch(channelId),
-    voicePresence,
+    voicePresence, speechOutput,
     isAddressed: message => {
         if (!message.guild) return true;
         const first = [...message.content.matchAll(/<@!?(\d+)>|\b(vesper|sable)\b/gi)]
