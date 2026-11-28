@@ -66,6 +66,7 @@ const client =
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMembers,
             GatewayIntentBits.GuildPresences,
+            GatewayIntentBits.GuildVoiceStates,
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
@@ -213,6 +214,8 @@ const openai =
 
 
 const { createWatchController } = require("./watch-bridge");
+const { createVoicePresence } = require("./voice-presence");
+const voicePresence = createVoicePresence();
 const watchBridge = createWatchController({
     token: process.env.GHOSTFRAME_BRIDGE_TOKEN,
     adminIds: ADMIN_USER_IDS,
@@ -220,6 +223,9 @@ const watchBridge = createWatchController({
     codingBoundary,
     isCodingRequest,
     codingRefusal,
+    generalChannelId: GENERAL_CHANNEL_ID,
+    getChannel: channelId => client.channels.fetch(channelId),
+    voicePresence,
 });
 
 

@@ -125,3 +125,95 @@ test('reply based on samples that became stale is discarded even with newer buff
     finish({choices:[{message:{content:'Stale description'}}]});await look;
     assert.equal(replies.some(r=>r.content==='Stale description'),false);
 });
+
+function automaticFixture(responses = ['A neat game moment.']) {
+    const clock = {time:1000000};
+    let calls = 0;
+    const posts = [], controls = [];
+    const channel = {sendTyping:async()=>{},send:async value=>{posts.push(value);}};
+    const openai = {chat:{completions:{create:async payload=>{
+        calls++;
+        assert.match(payload.messages[0].content,/NO_COMMENT/);
+        return {choices:[{message:{content:responses[Math.min(calls-1,responses.length-1)]}}]};
+    }}}};
+    const controller = createWatchController({token,adminIds:new Set(['admin']),openai,now:()=>clock.time,
+        generalChannelId:'general',getChannel:async id=>{assert.equal(id,'general');return channel;}});
+    function fresh(i, bytes=i) {
+        const image = Buffer.from([0xff,0xd8,0xff,bytes,0xff,0xd9]).toString('base64');
+        assert.equal(controller.store.accept(frame(i,clock.time,{image_base64:image})).status,200);
+    }
+    return {controller,clock,posts,controls,fresh,calls:()=>calls};
+}
+
+test('auto mode requires explicit admin enablement and targets configured general chat', async () => {
+    const f=automaticFixture();
+    await f.controller.tick();assert.equal(f.calls(),0);
+    await f.controller.handle(message('!watch auto 120',f.controls,'stranger'));
+    assert.equal(f.controller.store.status().active,false);
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    assert.equal(f.controller.store.status().channel_id,'general');
+    f.clock.time+=60000;f.fresh(1);await f.controller.tick();
+    assert.equal(f.posts.length,1);
+    assert.deepEqual(f.posts[0].allowedMentions.parse,[]);
+});
+test('auto mode can abstain and does not retry every scheduler tick', async () => {
+    const f=automaticFixture(['[NO_COMMENT]']);
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    f.clock.time+=60000;f.fresh(1);await f.controller.tick();await f.controller.tick();
+    assert.equal(f.calls(),1);assert.equal(f.posts.length,0);
+});
+test('auto comments have five-minute spacing and skip unchanged screenshots', async () => {
+    const f=automaticFixture(['First observation.','Second observation.']);
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    f.clock.time+=60000;f.fresh(1);await f.controller.tick();
+    f.clock.time+=180000;f.fresh(2);await f.controller.tick();assert.equal(f.calls(),1);
+    f.clock.time+=120000;f.fresh(3,1);await f.controller.tick();assert.equal(f.calls(),1);
+    f.clock.time+=180000;f.fresh(4);await f.controller.tick();assert.equal(f.calls(),2);
+    assert.equal(f.posts.length,2);
+});
+test('human conversation pauses checks for a minute', async () => {
+    const f=automaticFixture();
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    f.clock.time+=60000;
+    const human=message('Hey folks',f.controls);human.channelId='general';
+    await f.controller.handle(human);f.fresh(1);await f.controller.tick();assert.equal(f.calls(),0);
+    f.clock.time+=60000;f.fresh(2);await f.controller.tick();assert.equal(f.calls(),1);
+});
+test('automatic session expires and explicit off prevents future model calls', async () => {
+    const f=automaticFixture();
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    await f.controller.handle(message('!watch auto off',f.controls));
+    f.clock.time+=60000;f.fresh(1);await f.controller.tick();assert.equal(f.calls(),0);
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    f.clock.time+=120*60000;await f.controller.tick();assert.equal(f.controller.store.status().active,false);
+});
+test('duplicate commentary is suppressed even if the model repeats itself', async () => {
+    const f=automaticFixture(['Same observation!','Same observation.']);
+    await f.controller.handle(message('!watch auto 120',f.controls));
+    f.clock.time+=60000;f.fresh(1);await f.controller.tick();
+    f.clock.time+=5*60000;f.fresh(2);await f.controller.tick();
+    assert.equal(f.calls(),2);assert.equal(f.posts.length,1);
+});
+test('auto stop during an in-flight model request prevents publication', async () => {
+    let finish;
+    const pending=new Promise(resolve=>{finish=resolve;});
+    let time=1000000;const posts=[], controls=[];
+    const c=createWatchController({token,adminIds:new Set(['admin']),now:()=>time,
+        generalChannelId:'general',getChannel:async()=>({send:async value=>posts.push(value)}),
+        openai:{chat:{completions:{create:()=>pending}}}});
+    await c.handle(message('!watch auto 120',controls));time+=60000;c.store.accept(frame(1,time));
+    const task=c.tick();await new Promise(resolve=>setImmediate(resolve));
+    await c.handle(message('!watch auto off',controls));
+    finish({choices:[{message:{content:'Should be canceled'}}]});await task;
+    assert.equal(posts.length,0);
+});
+
+test('watch join is admin-only and stop also disconnects voice',async()=>{
+    let joins=0,leaves=0;const replies=[];
+    const voicePresence={join:async()=>{joins++;return {channel_id:'voice'};},leave:()=>{leaves++;},status:()=>({joined:false})};
+    const c=createWatchController({token,adminIds:new Set(['admin']),openai:{},voicePresence});
+    await c.handle(message('!watch join 120',replies,'stranger'));assert.equal(joins,0);
+    await c.handle(message('!watch join 120',replies));assert.equal(joins,1);
+    await c.handle(message('!watch stop',replies));assert.equal(leaves,1);
+    assert.match(replies.at(-1).content,/disconnected/);
+});

@@ -1,6 +1,6 @@
 'use strict';
 const http = require('node:http');
-const { timingSafeEqual } = require('node:crypto');
+const { timingSafeEqual, createHash } = require('node:crypto');
 
 const MAX_IMAGE = 1024 * 1024;
 const MAX_BODY = Math.ceil(MAX_IMAGE * 4 / 3) + 8192;
@@ -16,8 +16,8 @@ function createStore({ now = Date.now, ttl = 10 * 60 * 1000 } = {}) {
         return active;
     }
     return {
-        start(channelId, ownerId) {
-            active = { channelId, ownerId, expiresAt: now() + ttl, source: null,
+        start(channelId, ownerId, duration = ttl) {
+            active = { channelId, ownerId, expiresAt: now() + duration, source: null,
                 frames: [], seen: new Set(), lastCapture: 0, error: null };
             version++;
         },
@@ -134,24 +134,81 @@ function watchMessages(frames, question, codingBoundary = '') {
 
 function createWatchController({ token, adminIds, openai, codingBoundary = '', isCodingRequest = () => false,
     codingRefusal = () => 'I do not handle coding requests.', now = Date.now,
-    model = process.env.GHOSTFRAME_MODEL || 'gpt-5.5' }) {
+    model = process.env.GHOSTFRAME_MODEL || 'gpt-5.5', generalChannelId, getChannel = async () => null, voicePresence = null }) {
     const store = createStore({ now });
     let server;
+    let auto = null;
+    let busy = false;
     const enabled = typeof token === 'string' && token.length >= 32;
     const reply = (message, content) => message.reply({ content, allowedMentions: { parse: [], repliedUser: false } });
+    async function tickAuto() {
+        const watching = auto;
+        const status = store.status();
+        if (!watching || !status.active || status.channel_id !== generalChannelId) { auto = null; return; }
+        if (busy || now() < watching.nextCheck || now() - watching.lastHuman < 60000 ||
+            (watching.lastComment !== null && now() - watching.lastComment < 5 * 60000)) return;
+        const frames = store.frames(generalChannelId);
+        if (!frames.length) return;
+        watching.nextCheck = now() + 3 * 60000;
+        const digest = createHash('sha256').update(frames.at(-1).image_base64).digest('hex');
+        if (digest === watching.lastDigest) return;
+        watching.lastDigest = digest;
+        busy = true;
+        const version = store.version();
+        let typing;
+        try {
+            const channel = await getChannel(generalChannelId);
+            if (!channel || typeof channel.send !== 'function') throw new Error('Comment channel is unavailable');
+            if (channel.sendTyping) {
+                await channel.sendTyping().catch(() => {});
+                typing = setInterval(() => channel.sendTyping().catch(() => {}), 5000);
+            }
+            const messages = watchMessages(frames,
+                'Consider a brief, natural watch-along comment about what is visible. Stay silent if nothing merits one.', codingBoundary);
+            messages[0].content += ' This is occasional unsolicited watch-along commentary, not a request to narrate. ' +
+                'Return exactly [NO_COMMENT] for routine gameplay, menus, idle screens, only Discord UI, uncertain visuals, ' +
+                'or anything repetitive. A small specific observation or joke is welcome when something actually stands out. ' +
+                'Focus on the game/stream, ignoring chat sidebars, notifications, and your own prior messages visible in the image. ' +
+                'Do not force a joke, ask for engagement, or pretend to have followed unseen events. One or two short sentences. ' +
+                'Recent watch comments (avoid repeating): ' + JSON.stringify(watching.recent);
+            const response = await openai.chat.completions.create({ model, messages, max_completion_tokens: 400 });
+            if (auto !== watching || store.version() !== version || !store.frames(generalChannelId).length ||
+                frames.some(frame => now() - Date.parse(frame.captured_at) > MAX_AGE)) return;
+            const content = response.choices?.[0]?.message?.content?.trim();
+            if (!content || /\[NO_COMMENT\]/i.test(content)) return;
+            // Do not turn a repeated model observation into periodic spam.
+            const normalized = content.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            if (watching.recent.some(prior => prior.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === normalized)) return;
+            await channel.send({ content: content.slice(0, 1000), allowedMentions: { parse: [] } });
+            watching.lastComment = now();
+            watching.recent.push(content.slice(0, 300));
+            watching.recent = watching.recent.slice(-3);
+        } catch (error) {
+            if (auto === watching) watching.lastDigest = null;
+            console.error('[ghostframe] Automatic watch check failed:', error.message);
+        } finally {
+            if (typing) clearInterval(typing);
+            busy = false;
+        }
+    }
     return {
         store,
+        tick: tickAuto,
         startServer({ host = '127.0.0.1', port = 8766 } = {}) {
             if (!enabled) return null;
             if (server) return server;
             server = createServer({ store, token });
             server.on('error', error => console.error('[ghostframe] Receiver error:', error.message));
             server.listen(port, host, () => console.log(`[ghostframe] Receiver listening ${host}:${port}; watching is off until !watch start`));
+            const timer = setInterval(() => tickAuto().catch(error => console.error('[ghostframe] Watch scheduler:', error.message)), 15000);
+            timer.unref();
+            server.once('close', () => clearInterval(timer));
             return server;
         },
         async handle(message) {
             if (message.author.bot) return false;
-            const match = /^!watch\s+(start|stop|status|look)(?:\s+([\s\S]*))?\s*$/i.exec(message.content.trim());
+            const match = /^!watch\s+(start|stop|status|look|auto|join|leave)(?:\s+([\s\S]*))?\s*$/i.exec(message.content.trim());
+            if (auto && message.channelId === generalChannelId) auto.lastHuman = now();
             store.interrupt(message.channelId);  // A human takes the floor; discard older in-flight watch replies.
             if (!match) return false;
             if (!adminIds.has(message.author.id)) { await reply(message, 'Watch controls are restricted to configured admins.'); return true; }
@@ -159,13 +216,50 @@ function createWatchController({ token, adminIds, openai, codingBoundary = '', i
             const action = match[1].toLowerCase();
             const active = store.status();
             if (action === 'start') {
+                auto = null;
                 store.start(message.channelId, message.author.id);
                 await reply(message, 'Watch session enabled here for 10 minutes. Start the Mac bridge, then use !watch look. No audio or automatic commentary.');
             } else if (action === 'stop') {
+                auto = null;
                 store.stop();
-                await reply(message, 'Watch session stopped; buffered frames cleared.');
+                voicePresence?.leave();
+                await reply(message, 'Watch session stopped; buffered frames cleared and voice presence disconnected.');
             } else if (action === 'status') {
-                await reply(message, JSON.stringify(active));
+                await reply(message, JSON.stringify({ ...active, automatic_comments: Boolean(auto && active.active), voice: voicePresence?.status() || { joined: false } }));
+            } else if (action === 'join') {
+                const argument = (match[2] || '120').trim();
+                const minutes = /^\d+$/.test(argument) ? Number(argument) : NaN;
+                if (!voicePresence) {
+                    await reply(message, 'Voice presence has not been configured.');
+                } else {
+                    try {
+                        const status = await voicePresence.join(message, minutes);
+                        await reply(message, `Joined <#${status.channel_id}> for up to ${minutes} minutes, self-muted and self-deafened. Comments stay in general chat. !watch leave disconnects voice.`);
+                    } catch (error) {
+                        console.error('[ghostframe] Voice join failed:', error.message);
+                        await reply(message, 'Could not join voice: ' + error.message.slice(0, 300));
+                    }
+                }
+            } else if (action === 'leave') {
+                voicePresence?.leave();
+                await reply(message, 'Disconnected from voice. Watch comments are unchanged.');
+            } else if (action === 'auto') {
+                const argument = (match[2] || '120').trim().toLowerCase();
+                if (argument === 'off') {
+                    auto = null;
+                    await reply(message, 'Automatic watch comments disabled. Manual !watch look still works until the session expires.');
+                    return true;
+                }
+                const minutes = /^\d+$/.test(argument) ? Number(argument) : NaN;
+                if (!generalChannelId || !Number.isInteger(minutes) || minutes < 1 || minutes > 240) {
+                    await reply(message, 'Use !watch auto 120 for two hours (1–240 minutes), or !watch auto off. General chat must be configured.');
+                    return true;
+                }
+                store.start(generalChannelId, message.author.id, minutes * 60000);
+                auto = { nextCheck: now() + 60000, lastHuman: now(), lastComment: null, lastDigest: null, recent: [] };
+                await reply(message, `Watching for ${minutes} minutes, with occasional comments in <#${generalChannelId}>. ` +
+                    'Checks roughly every three minutes; comments at least five minutes apart, with silence when nothing stands out. ' +
+                    'Keep Lookout, the tunnel, and the sender running. !watch auto off pauses comments; !watch stop ends the session.');
             } else {
                 if (!active.active || active.channel_id !== message.channelId) {
                     await reply(message, 'Start a watch session in this channel first with !watch start.'); return true;
