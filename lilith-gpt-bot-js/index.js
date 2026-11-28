@@ -212,6 +212,17 @@ const openai =
     });
 
 
+const { createWatchController } = require("./watch-bridge");
+const watchBridge = createWatchController({
+    token: process.env.GHOSTFRAME_BRIDGE_TOKEN,
+    adminIds: ADMIN_USER_IDS,
+    openai,
+    codingBoundary,
+    isCodingRequest,
+    codingRefusal,
+});
+
+
 /*
  * -------------------------------------------------------
  * GENERAL HELPERS
@@ -1298,6 +1309,14 @@ client.once(
         initializePresence(
             readyClient
         );
+        try {
+            watchBridge.startServer({
+                host: process.env.GHOSTFRAME_BRIDGE_HOST || "127.0.0.1",
+                port: Number(process.env.GHOSTFRAME_BRIDGE_PORT || 8766),
+            });
+        } catch (error) {
+            console.error("[ghostframe] Receiver startup failed:", error.message);
+        }
     }
 );
 
@@ -1337,6 +1356,10 @@ client.on(
             return;
         }
 
+
+        // Watch controls are explicit admin commands; regular human messages
+        // also interrupt an older in-flight watch response in this channel.
+        if (await watchBridge.handle(message)) return;
 
         /*
          * ------------------------------------------------
